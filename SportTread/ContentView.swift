@@ -9,7 +9,7 @@ private func info(_ key: String) -> String {
 /// Milestone 0 test screen: one section per thing Signulous signing must not break.
 struct ContentView: View {
     @EnvironmentObject private var health: HealthTest
-    @EnvironmentObject private var watchLink: PhoneWatchLink
+    @EnvironmentObject private var heartRate: HeartRateMonitor
     @EnvironmentObject private var dataFolder: DataFolder
     @State private var confirmingDelete = false
 
@@ -38,24 +38,36 @@ struct ContentView: View {
                     Text(health.accessStatus).font(.footnote).foregroundStyle(.secondary)
                 }
 
-                Section("2 · Watch heart rate") {
-                    Text(watchLink.state).font(.footnote).foregroundStyle(.secondary)
-                    Button("Start workout on watch") { health.startWatchWorkout() }
-                    if !health.watchStartStatus.isEmpty {
-                        Text(health.watchStartStatus).font(.footnote).foregroundStyle(.secondary)
+                Section {
+                    Picker("Source", selection: $heartRate.source) {
+                        ForEach(HeartRateSource.allCases) { Text($0.label).tag($0) }
                     }
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        HStack(alignment: .firstTextBaseline) {
-                            Image(systemName: "heart.fill").foregroundStyle(.red)
-                            Text(watchLink.heartRate.map { "\(Int($0.rounded()))" } ?? "–")
-                                .font(.system(size: 48, weight: .heavy).monospacedDigit())
-                            Text("bpm").foregroundStyle(.secondary)
-                            Spacer()
-                            if let last = watchLink.lastUpdate {
-                                Text("\(Int(context.date.timeIntervalSince(last)))s ago")
-                                    .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
+                    if heartRate.source != .off {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            HStack(alignment: .firstTextBaseline) {
+                                Image(systemName: "heart.fill").foregroundStyle(.red)
+                                Text(heartRate.bpm.map { "\(Int($0.rounded()))" } ?? "–")
+                                    .font(.system(size: 48, weight: .heavy).monospacedDigit())
+                                Text("bpm").foregroundStyle(.secondary)
+                                Spacer()
+                                if let measured = heartRate.measuredAt {
+                                    Text("measured \(Int(context.date.timeIntervalSince(measured)))s ago")
+                                        .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
+                                }
                             }
                         }
+                    }
+                    Text(heartRate.status).font(.footnote).foregroundStyle(.secondary)
+                } header: {
+                    Text("2 · Heart rate (optional)")
+                } footer: {
+                    switch heartRate.source {
+                    case .off:
+                        Text("Heart rate is an add-on. Treadmill workouts work without it; heart-rate workouts need a source.")
+                    case .health:
+                        Text("Start an Indoor Walk or Run in Apple's Workout app on your watch. SportTread reads each reading as it syncs to Apple Health; \"measured … ago\" shows the delay.")
+                    case .bluetooth:
+                        Text("Uses any Bluetooth heart-rate monitor: a chest strap, or a watch app that broadcasts heart rate over Bluetooth. Turn the monitor on and keep it nearby.")
                     }
                 }
 
@@ -71,7 +83,7 @@ struct ContentView: View {
                 } header: {
                     Text("3 · Save a workout to Health")
                 } footer: {
-                    Text("Delete removes workouts saved by this iPhone app. For workouts recorded on the watch, use Discard on the watch instead of End.")
+                    Text("Delete removes the test workouts this app saved. Workouts recorded by Apple's Workout app on the watch stay untouched.")
                 }
 
                 Section {

@@ -3,7 +3,6 @@ options:
   bundleIdPrefix: com.andrew
   deploymentTarget:
     iOS: "17.0"
-    watchOS: "10.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -25,7 +24,7 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSHealthShareUsageDescription: SportTread reads your heart rate and workouts to run heart-rate workouts and show your history.
         NSHealthUpdateUsageDescription: SportTread saves your treadmill workouts, distance and calories to Apple Health.
-        NSBluetoothAlwaysUsageDescription: SportTread connects to your treadmill over Bluetooth to control speed and incline.
+        NSBluetoothAlwaysUsageDescription: SportTread connects to your treadmill and, if you use one, a Bluetooth heart-rate monitor.
         # Show the app's own folder in Files › On My iPhone › SportTread
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
@@ -47,31 +46,3 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.andrew.sporttread
         TARGETED_DEVICE_FAMILY: "1"
-    dependencies:
-      - target: SportTreadWatch
-        embed: true
-        copy:
-          destination: productsDirectory
-          subpath: $(CONTENTS_FOLDER_PATH)/Watch
-
-  SportTreadWatch:
-    type: application
-    platform: watchOS
-    sources: [SportTreadWatch]
-    info:
-      path: SportTreadWatch/Info.plist
-      properties:
-        CFBundleDisplayName: SportTread
-        WKApplication: true
-        WKCompanionAppBundleIdentifier: com.andrew.sporttread
-        WKBackgroundModes: [workout-processing]
-        NSHealthShareUsageDescription: SportTread reads your heart rate during treadmill workouts.
-        NSHealthUpdateUsageDescription: SportTread saves your treadmill workouts to Apple Health.
-    entitlements:
-      path: SportTreadWatch/SportTreadWatch.entitlements
-      properties:
-        com.apple.developer.healthkit: true
-        com.apple.developer.healthkit.access: []
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.andrew.sporttread.watchkitapp

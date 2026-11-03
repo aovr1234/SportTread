@@ -6,7 +6,6 @@ import HealthKit
 final class HealthTest: ObservableObject {
     let store = HKHealthStore()
     @Published var accessStatus = "Not requested yet"
-    @Published var watchStartStatus = ""
     @Published var saveStatus = ""
     @Published var deleteStatus = ""
 
@@ -27,21 +26,6 @@ final class HealthTest: ObservableObject {
                 : "Asked, but saving workouts isn't allowed. Check Settings › Health › Data Access."
         } catch {
             accessStatus = "Failed: \(error.localizedDescription)"
-        }
-    }
-
-    /// Launches the watch app straight into a workout session.
-    func startWatchWorkout() {
-        let config = HKWorkoutConfiguration()
-        config.activityType = .walking
-        config.locationType = .indoor
-        watchStartStatus = "Asking the watch…"
-        store.startWatchApp(with: config) { ok, error in
-            Task { @MainActor in
-                self.watchStartStatus = ok
-                    ? "Watch workout started"
-                    : "Couldn't start the watch: \(error?.localizedDescription ?? "unknown error")"
-            }
         }
     }
 
@@ -73,7 +57,7 @@ final class HealthTest: ObservableObject {
     }
 
     /// Deletes every workout and distance sample this iPhone app saved. Health only lets an app
-    /// delete its own data, so workouts recorded by the watch app aren't touched.
+    /// delete its own data, so workouts recorded by other apps aren't touched.
     func deleteTestWorkouts() async {
         let fromThisApp = HKQuery.predicateForObjects(from: HKSource.default())
         do {

@@ -26,15 +26,11 @@ jobs:
             build | tee xcodebuild.log | grep -E "error:|warning: |BUILD (SUCCEEDED|FAILED)" || true
           test -d build/Build/Products/Release-iphoneos/SportTread.app
 
-      # Ad-hoc signatures carry the HealthKit entitlements into the IPA,
+      # An ad-hoc signature carries the app's entitlements into the IPA,
       # so Signulous can see what the app needs when it re-signs.
       - name: Ad-hoc sign with entitlements and package IPA
         run: |
           APP=build/Build/Products/Release-iphoneos/SportTread.app
-          echo "Embedded watch apps:" && ls "$APP/Watch"
-          for W in "$APP"/Watch/*.app; do
-            codesign -f -s - --entitlements SportTreadWatch/SportTreadWatch.entitlements "$W"
-          done
           codesign -f -s - --entitlements SportTread/SportTread.entitlements "$APP"
           mkdir Payload && cp -R "$APP" Payload/
           zip -qry SportTread-unsigned.ipa Payload

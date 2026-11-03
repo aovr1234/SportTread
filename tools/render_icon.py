@@ -1,4 +1,4 @@
-"""Renders design/AppIcon.svg into the iPhone and Watch app icons.
+"""Renders design/AppIcon.svg into the iPhone app icon.
 
 Uses headless Chrome so SVG gradients and the glow filter render exactly as designed.
 Usage: python tools/render_icon.py
@@ -13,7 +13,6 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "design/AppIcon.svg"
 OUTPUTS = [
     ROOT / "SportTread/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
-    ROOT / "SportTreadWatch/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
 ]
 CHROME_PATHS = [
     pathlib.Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),

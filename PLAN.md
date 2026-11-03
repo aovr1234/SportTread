@@ -5,13 +5,13 @@ Status: planning, nothing built yet. Last updated 2026-11-01.
 ## Name
 - App name: **Andrew's SportTread** (in-app title, splash, settings, Health source name).
 - Home-screen label: **SportTread**. iOS cuts off names longer than about 12 characters, so the full name would show as "Andrew's Spo…".
-- Bundle ID: `com.andrew.sporttread` (watch app: `com.andrew.sporttread.watchkitapp`).
+- Bundle ID: `com.andrew.sporttread`. Signulous signs it under its own shared ID, so Apple Health labels the app "Spotify" (cosmetic; see Decisions).
 
 ## Design: modern and sporty
 - **Dark first**, near-black background, with a light mode available. Easy on the eyes, and readings stand out from a running distance.
 - **One accent colour:** high-energy volt green `#C6FF00` for primary actions and progress. **STOP is always red** and never used for anything else.
-- **Heart-rate zone colours**, used consistently on phone, watch and charts: Z1 blue, Z2 green, Z3 yellow, Z4 orange, Z5 red.
-- **Type:** SF Pro, heavy weight with tabular digits for live numbers (speed, HR, time) so they don't jitter; SF Pro Rounded for labels. On the watch, SF Compact.
+- **Heart-rate zone colours**, used consistently on the live screen and charts: Z1 blue, Z2 green, Z3 yellow, Z4 orange, Z5 red.
+- **Type:** SF Pro, heavy weight with tabular digits for live numbers (speed, HR, time) so they don't jitter; SF Pro Rounded for labels.
 - **Glanceable live screen:** the most important number (HR in an HR workout, speed otherwise) huge in the centre, in a ring that fills toward the target and changes colour with the zone. Speed, incline, time and distance in large tiles around it. Current and next step in a bar at the bottom.
 - **Big tap targets** (at least 60 pt during a workout) so you can hit them while moving.
 - **Motion and feel:**
@@ -21,18 +21,18 @@ Status: planning, nothing built yet. Last updated 2026-11-01.
   - A 3-2-1 countdown before the belt starts.
 - **Live charts:** HR vs target line, speed/incline area chart (Swift Charts), on the live screen and in history.
 - **Lock screen and Dynamic Island:** a Live Activity with HR, speed and time left, so the phone can stay locked on the treadmill tray.
-- **Watch:** the same zone-coloured ring, HR huge, and Pause / End as full-width buttons.
 - **App icon:** a stylised treadmill belt forming a pulse line, volt green on black.
 
 ## Goal
-An iPhone app plus an Apple Watch companion that runs a ProForm 505 CST treadmill without iFit:
-automated workouts, heart-rate hold (e.g. 150 bpm) from the Apple Watch, results saved to Apple Health,
-and app data kept in a Files/iCloud Drive folder that survives deleting the app.
+An iPhone app that runs a ProForm 505 CST treadmill without iFit: automated workouts, optional
+heart-rate hold (e.g. 150 bpm), results saved to Apple Health, and app data kept where it survives
+deleting the app. No watch app: Signulous signs for the iPhone only, so a watch app can't be installed.
 
 ## Architecture
 ```
-Apple Watch app ──HR ~1/s (WatchConnectivity)──▶ iPhone app ──Bluetooth LE──▶ ProForm 505 CST
- (HKWorkoutSession, records the Health workout)    (control, workouts, storage)
+Optional HR source ──▶ iPhone app ──Bluetooth LE──▶ ProForm 505 CST
+ (Apple Health, or a      (control, workouts,
+  Bluetooth HR monitor)    storage, Health)
 ```
 
 ### 1. Treadmill connection (iPhone, CoreBluetooth)
@@ -47,9 +47,11 @@ Verified on the user's treadmill, 2026-11-01:
 - Reference implementation: `treadmill.html` (Web Bluetooth version, working).
 - Not done: fan control (not needed).
 
-### 2. Heart rate
-- Watch app runs an indoor run/walk `HKWorkoutSession` and sends HR to the phone about once a second; the phone shows how old the latest reading is.
-- Fallback: any standard Bluetooth heart-rate strap.
+### 2. Heart rate (optional add-on)
+Setting: **Off** (default), **Apple Watch (via Health)**, or **Bluetooth monitor**. Treadmill workouts work with it off; HR workouts need a source.
+- **Apple Watch (via Health):** the user starts an Indoor Walk/Run in Apple's Workout app; the app reads new HR samples as they sync to Apple Health. Free, but delayed; milestone 0 measures how much.
+- **Bluetooth monitor:** any standard BLE heart-rate monitor (service 0x180D), about 1 reading/s. A chest strap or armband works. Watch "broadcast" apps (HeartCast, Echo) relay through the iPhone, and an iPhone can't connect to its own Bluetooth broadcast, so they can't feed the app on the same phone.
+- HR hold accepts a reading only if it's at most 15 s old (section 4); a source that's slower than that can show HR but not drive HR hold.
 
 ### 3. Workout engine
 - A workout is a list of steps: duration plus either a fixed speed/incline or a heart-rate target.
@@ -90,31 +92,25 @@ Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR form
 - If the belt stops (console Stop, safety key), the workout ends cleanly.
 
 ### 5. Apple Health
-- One workout per session, recorded by the watch's workout session (indoor run/walk).
-- Heart rate: recorded by the watch. The app does not write it again (avoids duplicates).
-- Distance: the watch's arm-swing estimate is switched off. Treadmill-measured distance is written into the same workout.
-- Also written: speed samples, elevation gained (incline × distance), active calories calculated from speed/incline/weight (watch estimate switched off), segments per step, pause/resume events, metadata (indoor, workout name, HR target).
+- The phone saves one workout per session (indoor walk/run) with treadmill-measured distance.
+- Heart rate: if the Apple Watch's Workout app also recorded the session, Health already has the HR and that workout; the app links to it rather than duplicating HR. With a Bluetooth monitor, the app writes the HR samples itself.
+- Also written: speed samples, elevation gained (incline × distance), active calories calculated from speed/incline/weight, segments per step, pause/resume events, metadata (indoor, workout name, HR target).
 - Read: weight (calories), age / resting HR / max HR (zones, default max-HR limit), past workouts (history after reinstall).
 
-### 6. App data storage (survives app deletion)
-- Data stays outside the app's own folder, so deleting the app never deletes it.
-- **First-launch setup, before anything else:**
-  1. The app explains that it needs a folder for settings and workout history, and recommends iCloud Drive.
-  2. "Choose or create folder" opens the standard Files folder picker at iCloud Drive. The user taps New Folder (suggested name: `Treadmill`) or picks an existing one. A folder under On My iPhone also works, but stays on that phone only.
-  3. If the folder already has app data (e.g. after a reinstall), the app offers to restore it. Otherwise it creates the folder layout below.
-  4. The app remembers the folder (security-scoped bookmark), so this only happens once per install.
+### 6. App data storage
+- The app creates its data folder itself; there is no folder picker (under Signulous signing the Files picker's Open never returns).
+  - **iCloud Drive › SportTread** if the signing provides the app's iCloud container. Survives deleting the app.
+  - Otherwise **On My iPhone › SportTread**, visible in the Files app but deleted with the app.
+- **Back up to Files** exports a copy of the data to any location (e.g. iCloud Drive); **Restore from backup** imports one. Both use copy-mode pickers, which don't need folder access.
 - Folder layout (plain JSON, readable in the Files app):
   ```
-  Treadmill/
+  SportTread/
     settings.json   limits, HR targets, controller tuning, treadmill info
     workouts/       custom programs
     history/        per-second logs (HR, target, speed, incline) per session
   ```
 - Saves automatically after every settings change and at the end of every workout.
-- Settings screen shows the current folder, the last-saved time, and "Change folder".
-- If the folder is unreachable (e.g. iCloud offline), the app keeps a local copy, shows a warning, and syncs when it's back.
-- Manual "Export backup" (one file via the share sheet) as an extra safety net.
-- Not used: CloudKit / iCloud key-value sync. They need the signing account's iCloud setup, which Signulous controls.
+- Workouts themselves are also in Apple Health, which survives deleting the app.
 
 ### 7. Performance tracking and AI coach
 **Performance tracking (on the phone, offline, free)**
@@ -140,28 +136,22 @@ Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR form
 - Offline or API unavailable: falls back to rule-based progression (e.g. target hit easily 3 times, so +0.5% incline next time).
 
 ### 8. Screens
-- **iPhone:** first-launch folder setup, connect, workout list, workout editor, live workout (HR and target, speed, incline, time, distance, current/next step, STOP), history, settings.
-- **Watch:** HR and target, current step and time left, plus controls:
-  - **Pause:** one tap stops the belt at once (pause mode) and pauses the workout and the Health recording.
-  - **Resume:** a 3-second countdown, then the belt restarts and returns to the speed and incline from before the pause.
-  - **End:** asks for confirmation, then stops the belt, ends the workout and saves it to Health and the data folder.
-  - Commands go to the phone over WatchConnectivity (usually under 1 s). The watch shows whether the phone is reachable. If it isn't, it shows "Use the console Stop button" instead of buttons that would do nothing.
-  - Haptic tap when a command is confirmed by the treadmill.
+- **iPhone:** connect, workout list, workout editor, live workout (HR and target, speed, incline, time, distance, current/next step, STOP), history, settings.
 
 ## Build and install (no Mac)
 - Project kept as text in a GitHub repo (XcodeGen or similar).
 - GitHub Actions macOS runner builds an unsigned `.ipa` on every push.
 - The user signs it with Signulous and installs it.
-- Biggest risk: whether Signulous keeps HealthKit and the embedded watch app when it re-signs.
+- Signulous signs for the iPhone only: HealthKit works, a watch app can't be installed, and the app's signing ID is shared with other sideloaded apps.
 
 ## Milestones
 | # | Milestone | Done when |
 |---|---|---|
-| 0 | Signing and storage test | After a Signulous install: watch HR shows on the phone; a test workout with treadmill distance appears in Fitness; data saved to a newly created iCloud Drive folder is restored after delete and reinstall |
+| 0 | Signing and storage test | After a Signulous install: HR shows from the chosen source (and the Health delay is measured); a test workout with treadmill distance appears in Fitness; data survives delete and reinstall (iCloud folder or backup/restore) |
 | 1 | Treadmill control | Phone does start, speed, incline and stop, with live readout matching the console |
 | 2 | Workout engine | A preset interval workout runs by itself, start to finish |
 | 3 | Heart-rate hold | Holds 150 ±5 bpm for 10+ minutes in a real session |
-| 4 | Health and polish | Full Health write, history, workout editor, export, watch controls |
+| 4 | Health and polish | Full Health write, history, workout editor, backup/restore |
 | 5 | AI coach | Performance metrics trend correctly over several workouts; Claude proposes a next workout that passes the safety checks and runs; offline fallback works |
 
 ## Limits of testing
@@ -171,9 +161,8 @@ Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR form
 
 ## Decisions
 - Limits and HR-hold behaviour: common-practice defaults (see section 4), adjustable in settings.
-- Signing: Signulous, most likely on a paid developer account. Paid accounts can sign apps with HealthKit and an embedded watch app, but whether Signulous's re-signing keeps them is only confirmed by milestone 0.
-
-- Watch: pause, resume and end controls (see section 8).
+- Signing: Signulous. It signs for the iPhone only and under a signing ID shared with the user's sideloaded Spotify, so Health labels the app "Spotify" and Health permissions are shared with that app. "Match provisioning identifier" would replace Spotify, so it isn't used.
+- No watch app (Signulous can't sign one); heart rate is an optional add-on (section 2).
 - AI coach: Claude via the user's Anthropic API key, on top of on-device performance tracking (section 7, milestone 5).
 
 ## Open questions

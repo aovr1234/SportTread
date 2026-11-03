@@ -2,8 +2,6 @@
 *.xcodeproj/
 SportTread/Info.plist
 SportTread/SportTread.entitlements
-SportTreadWatch/Info.plist
-SportTreadWatch/SportTreadWatch.entitlements
 
 build/
 Payload/

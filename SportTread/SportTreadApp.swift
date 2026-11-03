@@ -3,14 +3,14 @@ import SwiftUI
 @main
 struct SportTreadApp: App {
     @StateObject private var health = HealthTest()
-    @StateObject private var watchLink = PhoneWatchLink()
+    @StateObject private var heartRate = HeartRateMonitor()
     @StateObject private var dataFolder = DataFolder()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(health)
-                .environmentObject(watchLink)
+                .environmentObject(heartRate)
                 .environmentObject(dataFolder)
                 .preferredColorScheme(.dark)
                 .tint(Theme.volt)
