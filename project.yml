@@ -26,11 +26,23 @@ targets:
         NSHealthShareUsageDescription: SportTread reads your heart rate and workouts to run heart-rate workouts and show your history.
         NSHealthUpdateUsageDescription: SportTread saves your treadmill workouts, distance and calories to Apple Health.
         NSBluetoothAlwaysUsageDescription: SportTread connects to your treadmill over Bluetooth to control speed and incline.
+        # Show the app's own folder in Files › On My iPhone › SportTread
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        # Show the iCloud container as iCloud Drive › SportTread (only if the signing provides iCloud)
+        NSUbiquitousContainers:
+          iCloud.com.andrew.sporttread:
+            NSUbiquitousContainerIsDocumentScopePublic: true
+            NSUbiquitousContainerName: SportTread
+            NSUbiquitousContainerSupportedFolderLevels: Any
     entitlements:
       path: SportTread/SportTread.entitlements
       properties:
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.access: []
+        com.apple.developer.icloud-services: [CloudDocuments]
+        com.apple.developer.icloud-container-identifiers: [iCloud.com.andrew.sporttread]
+        com.apple.developer.ubiquity-container-identifiers: [iCloud.com.andrew.sporttread]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.andrew.sporttread

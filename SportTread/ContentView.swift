@@ -1,5 +1,6 @@
 import HealthKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 private func info(_ key: String) -> String {
     Bundle.main.object(forInfoDictionaryKey: key) as? String ?? "?"
@@ -12,17 +13,21 @@ struct ContentView: View {
     @EnvironmentObject private var dataFolder: DataFolder
     @State private var confirmingDelete = false
 
-    private func chooseFolder() {
-        dataFolder.message = "Opening Files…"
-        let shown = FolderPicker.shared.present(
-            onPick: { url in
-                dataFolder.message = "Picked \(url.lastPathComponent)…"
-                dataFolder.use(url)
-            },
-            onCancel: { dataFolder.message = "No folder picked" })
-        if !shown {
-            dataFolder.message = "Couldn't open the Files picker"
-        }
+    private func backUp() {
+        guard let file = dataFolder.makeBackupFile() else { return }
+        let shown = DocumentPicker.shared.exportCopy(
+            of: file,
+            onDone: { saved in dataFolder.message = "Backed up to \(saved.deletingLastPathComponent().lastPathComponent)" },
+            onCancel: { dataFolder.message = "Backup cancelled" })
+        if !shown { dataFolder.message = "Couldn't open Files" }
+    }
+
+    private func restoreBackup() {
+        let shown = DocumentPicker.shared.importCopy(
+            of: [.json],
+            onPick: { file in dataFolder.restore(from: file) },
+            onCancel: { dataFolder.message = "Restore cancelled" })
+        if !shown { dataFolder.message = "Couldn't open Files" }
     }
 
     var body: some View {
@@ -70,18 +75,19 @@ struct ContentView: View {
                 }
 
                 Section {
-                    Button(dataFolder.folderName == nil ? "Choose folder" : "Change folder") {
-                        chooseFolder()
+                    LabeledContent("Saved in", value: dataFolder.folderDescription)
+                    Button("Save test data now") { dataFolder.saveNow() }
+                    Button("Back up to Files…") { backUp() }
+                    Button("Restore from backup…") { restoreBackup() }
+                    if !dataFolder.message.isEmpty {
+                        Text(dataFolder.message).font(.footnote).foregroundStyle(.secondary)
                     }
-                    if let name = dataFolder.folderName {
-                        LabeledContent("Folder", value: name)
-                        Button("Save test data now") { dataFolder.saveNow() }
-                    }
-                    Text(dataFolder.message).font(.footnote).foregroundStyle(.secondary)
                 } header: {
                     Text("4 · Data folder")
                 } footer: {
-                    Text("Go to iCloud Drive and tap Open. The app creates a SportTread folder there. After reinstalling, do the same and your data is restored.")
+                    Text(dataFolder.location == .onDevice
+                         ? "iCloud Drive isn't available to the app, so data is on this iPhone and is deleted with the app. Use Back up to save a copy to iCloud Drive, and Restore after reinstalling."
+                         : "The app creates its folder automatically. Data in iCloud Drive › SportTread survives deleting the app.")
                 }
 
                 Section {

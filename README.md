@@ -16,8 +16,8 @@ A small test app that checks that Signulous signing keeps everything the real ap
 | 1 | Tap **Request Health access**, allow everything | Status says "Granted: can save workouts" |
 | 2 | Install the watch app (Watch app on iPhone → SportTread → Install), then tap **Start workout on watch** | The watch opens a workout and the phone shows your bpm, updating every few seconds |
 | 3 | Tap **Save test workout (0.50 mi)** | A 10-min indoor walk with 0.50 mi shows in the Fitness app |
-| 4 | Tap **Choose folder** → go to iCloud Drive → tap **Open** | "Set up iCloud Drive/SportTread. Test data saved." and `SportTread/settings.json` is visible in the Files app |
-| 5 | Delete the app, reinstall, tap **Choose folder** → iCloud Drive → **Open** | "Restored data saved …" with the earlier time |
+| 4 | Open the app and look at **Saved in** | `iCloud Drive › SportTread` (or `On My iPhone › SportTread` if the signing has no iCloud); the folder and `settings.json` are visible in the Files app |
+| 5 | Tap **Back up to Files…**, save to iCloud Drive; delete and reinstall the app; tap **Restore from backup…** and pick that file | "Restored backup saved …" with the earlier time (with iCloud, the data is simply still there after reinstalling) |
 
 On the watch, **End** saves the workout to Health and **Discard** throws it away.
 On the phone, **Delete test workouts** removes the test workouts the phone app saved.

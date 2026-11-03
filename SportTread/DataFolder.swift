@@ -1,95 +1,87 @@
 import UIKit
 
-/// App data lives in a folder outside the app's own container (ideally in iCloud Drive), so it
-/// survives deleting the app. The user picks a location; the app keeps its data in a `SportTread`
-/// folder there, or in the picked folder itself if that already holds SportTread data.
+/// App data lives in a folder the app creates itself:
+/// - iCloud Drive › SportTread when the signing allows the app's iCloud container (survives deleting the app)
+/// - otherwise Files › On My iPhone › SportTread (removed with the app; use Back up to keep a copy)
+/// Picking a folder with the Files picker doesn't work under Signulous signing: Open never returns.
 @MainActor
 final class DataFolder: ObservableObject {
-    static let appFolderName = "SportTread"
-
-    @Published var folderName: String?
-    @Published var message = "No folder chosen yet"
-
-    private let bookmarkKey = "dataFolderBookmark"      // the folder the user picked
-    private let subfolderKey = "dataFolderSubfolder"    // "" or "SportTread" inside it
-    private let fileName = "settings.json"
-
-    init() {
-        if let (picked, sub) = resolveBookmark() {
-            folderName = label(picked, sub)
-            message = "Using \(label(picked, sub))"
-        }
+    enum Location {
+        case iCloud, onDevice
     }
 
-    /// Called with the folder chosen in the Files picker.
-    func use(_ picked: URL) {
-        message = "Opening \(picked.lastPathComponent)…"
-        guard picked.startAccessingSecurityScopedResource() else {
-            message = "iOS didn't give access to “\(picked.lastPathComponent)”. Pick it again."
-            return
+    @Published var location: Location?
+    @Published var folderDescription = "Setting up…"
+    @Published var message = ""
+
+    private let fileName = "settings.json"
+    private(set) var folder: URL?
+
+    init() {
+        Task { await setUp() }
+    }
+
+    func setUp() async {
+        // nil = the first iCloud container in the app's entitlements; must not run on the main thread
+        let container = await Task.detached { FileManager.default.url(forUbiquityContainerIdentifier: nil) }.value
+        let folder: URL
+        if let container {
+            folder = container.appendingPathComponent("Documents", isDirectory: true)
+            location = .iCloud
+            folderDescription = "iCloud Drive › SportTread"
+        } else {
+            folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            location = .onDevice
+            folderDescription = "On My iPhone › SportTread"
         }
-        defer { picked.stopAccessingSecurityScopedResource() }
+        self.folder = folder
         do {
-            let reuse = picked.lastPathComponent == Self.appFolderName || hasData(in: picked)
-            let sub = reuse ? "" : Self.appFolderName
-            let folder = sub.isEmpty ? picked : picked.appendingPathComponent(sub, isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-
-            let bookmark = try picked.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
-            UserDefaults.standard.set(bookmark, forKey: bookmarkKey)
-            UserDefaults.standard.set(sub, forKey: subfolderKey)
-            folderName = label(picked, sub)
-
             if let saved = try? read(from: folder) {
-                message = "Restored data saved \(saved.savedAt.formatted()) on \(saved.device)"
+                message = "Found data saved \(saved.savedAt.formatted()) on \(saved.device)"
             } else {
                 try write(to: folder)
-                message = "Set up \(label(picked, sub)). Test data saved."
+                message = "Created \(fileName)"
             }
         } catch {
-            message = "Couldn't set up the folder: \(error.localizedDescription)"
+            message = "Setup failed: \(error.localizedDescription)"
         }
     }
 
     func saveNow() {
-        guard let (picked, sub) = resolveBookmark() else {
-            message = "Choose a folder first"
-            return
-        }
-        guard picked.startAccessingSecurityScopedResource() else {
-            message = "Lost access to the folder. Choose it again."
-            return
-        }
-        defer { picked.stopAccessingSecurityScopedResource() }
+        guard let folder else { return }
         do {
-            try write(to: sub.isEmpty ? picked : picked.appendingPathComponent(sub, isDirectory: true))
+            try write(to: folder)
             message = "Saved \(Date().formatted(date: .omitted, time: .standard))"
         } catch {
             message = "Save failed: \(error.localizedDescription)"
         }
     }
 
-    private func label(_ picked: URL, _ sub: String) -> String {
-        sub.isEmpty ? picked.lastPathComponent : "\(picked.lastPathComponent)/\(sub)"
-    }
-
-    /// True if the folder holds SportTread data, including an iCloud placeholder not downloaded yet.
-    private func hasData(in folder: URL) -> Bool {
-        let fm = FileManager.default
-        return fm.fileExists(atPath: folder.appendingPathComponent(fileName).path)
-            || fm.fileExists(atPath: folder.appendingPathComponent(".\(fileName).icloud").path)
-    }
-
-    private func resolveBookmark() -> (URL, String)? {
-        guard let data = UserDefaults.standard.data(forKey: bookmarkKey) else { return nil }
-        var stale = false
-        guard let url = try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &stale) else {
+    /// Writes a copy of the current data to a temporary file for the Files export picker.
+    func makeBackupFile() -> URL? {
+        guard let folder else { return nil }
+        let backup = FileManager.default.temporaryDirectory.appendingPathComponent("SportTread-backup.json")
+        do {
+            let data = try JSONEncoder.iso.encode(try read(from: folder))
+            try data.write(to: backup, options: .atomic)
+            return backup
+        } catch {
+            message = "Couldn't prepare the backup: \(error.localizedDescription)"
             return nil
         }
-        if stale, let fresh = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
-            UserDefaults.standard.set(fresh, forKey: bookmarkKey)
+    }
+
+    /// Restores from a backup file the import picker copied into the app.
+    func restore(from file: URL) {
+        guard let folder else { return }
+        do {
+            let saved = try JSONDecoder.iso.decode(TestData.self, from: Data(contentsOf: file))
+            try coordinatedWrite(JSONEncoder.iso.encode(saved), to: folder.appendingPathComponent(fileName))
+            message = "Restored backup saved \(saved.savedAt.formatted()) on \(saved.device)"
+        } catch {
+            message = "That file isn't a SportTread backup: \(error.localizedDescription)"
         }
-        return (url, UserDefaults.standard.string(forKey: subfolderKey) ?? "")
     }
 
     // Coordinated access so iCloud Drive downloads the file if it's only a placeholder.
@@ -106,8 +98,11 @@ final class DataFolder: ObservableObject {
     }
 
     private func write(to folder: URL) throws {
-        let file = folder.appendingPathComponent(fileName)
         let data = try JSONEncoder.iso.encode(TestData(savedAt: Date(), device: UIDevice.current.name))
+        try coordinatedWrite(data, to: folder.appendingPathComponent(fileName))
+    }
+
+    private func coordinatedWrite(_ data: Data, to file: URL) throws {
         var writeError: Error?
         var coordError: NSError?
         NSFileCoordinator().coordinate(writingItemAt: file, options: .forReplacing, error: &coordError) { url in
