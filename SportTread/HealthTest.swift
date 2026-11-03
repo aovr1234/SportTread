@@ -8,6 +8,7 @@ final class HealthTest: ObservableObject {
     @Published var accessStatus = "Not requested yet"
     @Published var watchStartStatus = ""
     @Published var saveStatus = ""
+    @Published var deleteStatus = ""
 
     var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
 
@@ -68,6 +69,33 @@ final class HealthTest: ObservableObject {
             saveStatus = "Saved a 10-min indoor walk with 0.50 mi at \(end.formatted(date: .omitted, time: .shortened)). Check the Fitness app."
         } catch {
             saveStatus = "Failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Deletes every workout and distance sample this iPhone app saved. Health only lets an app
+    /// delete its own data, so workouts recorded by the watch app aren't touched.
+    func deleteTestWorkouts() async {
+        let fromThisApp = HKQuery.predicateForObjects(from: HKSource.default())
+        do {
+            let workouts = try await deleteObjects(of: HKObjectType.workoutType(), predicate: fromThisApp)
+            let samples = try await deleteObjects(of: HKQuantityType(.distanceWalkingRunning), predicate: fromThisApp)
+            deleteStatus = workouts == 0 && samples == 0
+                ? "Nothing to delete: no test workouts saved by this app"
+                : "Deleted \(workouts) workout\(workouts == 1 ? "" : "s") and \(samples) distance sample\(samples == 1 ? "" : "s")"
+        } catch {
+            deleteStatus = "Delete failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func deleteObjects(of type: HKObjectType, predicate: NSPredicate) async throws -> Int {
+        try await withCheckedThrowingContinuation { continuation in
+            store.deleteObjects(of: type, predicate: predicate) { _, count, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: count)
+                }
+            }
         }
     }
 }

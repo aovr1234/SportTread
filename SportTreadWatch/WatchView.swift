@@ -12,7 +12,10 @@ struct WatchView: View {
             }
             Text(workout.status).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
             if workout.running {
-                Button("End", role: .destructive) { workout.end() }
+                HStack {
+                    Button("Discard") { workout.discard() }
+                    Button("End", role: .destructive) { workout.end() }
+                }
             } else {
                 Button("Start") { workout.start() }
                     .tint(Color(red: 0.776, green: 1.0, blue: 0.0))

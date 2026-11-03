@@ -72,6 +72,17 @@ final class WorkoutManager: NSObject, ObservableObject {
         }
     }
 
+    /// Ends the workout without saving anything to Health (for test runs).
+    func discard() {
+        guard let session, let builder else { return }
+        session.end()
+        builder.discardWorkout()
+        self.session = nil
+        self.builder = nil
+        running = false
+        status = "Discarded, nothing saved"
+    }
+
     private func send(_ bpm: Double) {
         let wc = WCSession.default
         guard wc.activationState == .activated else { return }

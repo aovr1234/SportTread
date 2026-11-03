@@ -1,66 +1,86 @@
 import UIKit
 
-/// Milestone 0: app data lives in a folder the user picks or creates (ideally in iCloud Drive),
-/// outside the app's own container, so it survives deleting the app.
+/// App data lives in a folder outside the app's own container (ideally in iCloud Drive), so it
+/// survives deleting the app. The user picks a location; the app keeps its data in a `SportTread`
+/// folder there, or in the picked folder itself if that already holds SportTread data.
 @MainActor
 final class DataFolder: ObservableObject {
+    static let appFolderName = "SportTread"
+
     @Published var folderName: String?
     @Published var message = "No folder chosen yet"
 
-    private let bookmarkKey = "dataFolderBookmark"
+    private let bookmarkKey = "dataFolderBookmark"      // the folder the user picked
+    private let subfolderKey = "dataFolderSubfolder"    // "" or "SportTread" inside it
     private let fileName = "settings.json"
 
     init() {
-        restoreBookmark()
+        if let (picked, sub) = resolveBookmark() {
+            folderName = label(picked, sub)
+            message = "Using \(label(picked, sub))"
+        }
     }
 
-    /// Called with the folder from the Files picker.
-    func use(_ url: URL) {
-        guard url.startAccessingSecurityScopedResource() else {
-            message = "Couldn't open that folder"
+    /// Called with the folder chosen in the Files picker.
+    func use(_ picked: URL) {
+        message = "Opening \(picked.lastPathComponent)…"
+        guard picked.startAccessingSecurityScopedResource() else {
+            message = "iOS didn't give access to “\(picked.lastPathComponent)”. Pick it again."
             return
         }
-        defer { url.stopAccessingSecurityScopedResource() }
+        defer { picked.stopAccessingSecurityScopedResource() }
         do {
-            let bookmark = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+            let reuse = picked.lastPathComponent == Self.appFolderName || hasData(in: picked)
+            let sub = reuse ? "" : Self.appFolderName
+            let folder = sub.isEmpty ? picked : picked.appendingPathComponent(sub, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+            let bookmark = try picked.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
             UserDefaults.standard.set(bookmark, forKey: bookmarkKey)
-            folderName = url.lastPathComponent
-            if let saved = try? read(from: url) {
+            UserDefaults.standard.set(sub, forKey: subfolderKey)
+            folderName = label(picked, sub)
+
+            if let saved = try? read(from: folder) {
                 message = "Restored data saved \(saved.savedAt.formatted()) on \(saved.device)"
             } else {
-                try write(to: url)
-                message = "Folder set up. Test data saved."
+                try write(to: folder)
+                message = "Set up \(label(picked, sub)). Test data saved."
             }
         } catch {
-            message = "Failed: \(error.localizedDescription)"
+            message = "Couldn't set up the folder: \(error.localizedDescription)"
         }
     }
 
     func saveNow() {
-        guard let url = resolveBookmark() else {
+        guard let (picked, sub) = resolveBookmark() else {
             message = "Choose a folder first"
             return
         }
-        guard url.startAccessingSecurityScopedResource() else {
+        guard picked.startAccessingSecurityScopedResource() else {
             message = "Lost access to the folder. Choose it again."
             return
         }
-        defer { url.stopAccessingSecurityScopedResource() }
+        defer { picked.stopAccessingSecurityScopedResource() }
         do {
-            try write(to: url)
+            try write(to: sub.isEmpty ? picked : picked.appendingPathComponent(sub, isDirectory: true))
             message = "Saved \(Date().formatted(date: .omitted, time: .standard))"
         } catch {
             message = "Save failed: \(error.localizedDescription)"
         }
     }
 
-    private func restoreBookmark() {
-        guard let url = resolveBookmark() else { return }
-        folderName = url.lastPathComponent
-        message = "Using folder \(url.lastPathComponent)"
+    private func label(_ picked: URL, _ sub: String) -> String {
+        sub.isEmpty ? picked.lastPathComponent : "\(picked.lastPathComponent)/\(sub)"
     }
 
-    private func resolveBookmark() -> URL? {
+    /// True if the folder holds SportTread data, including an iCloud placeholder not downloaded yet.
+    private func hasData(in folder: URL) -> Bool {
+        let fm = FileManager.default
+        return fm.fileExists(atPath: folder.appendingPathComponent(fileName).path)
+            || fm.fileExists(atPath: folder.appendingPathComponent(".\(fileName).icloud").path)
+    }
+
+    private func resolveBookmark() -> (URL, String)? {
         guard let data = UserDefaults.standard.data(forKey: bookmarkKey) else { return nil }
         var stale = false
         guard let url = try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &stale) else {
@@ -69,7 +89,7 @@ final class DataFolder: ObservableObject {
         if stale, let fresh = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
             UserDefaults.standard.set(fresh, forKey: bookmarkKey)
         }
-        return url
+        return (url, UserDefaults.standard.string(forKey: subfolderKey) ?? "")
     }
 
     // Coordinated access so iCloud Drive downloads the file if it's only a placeholder.
