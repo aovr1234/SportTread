@@ -10,8 +10,20 @@ struct ContentView: View {
     @EnvironmentObject private var health: HealthTest
     @EnvironmentObject private var watchLink: PhoneWatchLink
     @EnvironmentObject private var dataFolder: DataFolder
-    @State private var pickingFolder = false
     @State private var confirmingDelete = false
+
+    private func chooseFolder() {
+        dataFolder.message = "Opening Files…"
+        let shown = FolderPicker.shared.present(
+            onPick: { url in
+                dataFolder.message = "Picked \(url.lastPathComponent)…"
+                dataFolder.use(url)
+            },
+            onCancel: { dataFolder.message = "No folder picked" })
+        if !shown {
+            dataFolder.message = "Couldn't open the Files picker"
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -59,7 +71,7 @@ struct ContentView: View {
 
                 Section {
                     Button(dataFolder.folderName == nil ? "Choose folder" : "Change folder") {
-                        pickingFolder = true
+                        chooseFolder()
                     }
                     if let name = dataFolder.folderName {
                         LabeledContent("Folder", value: name)
@@ -75,26 +87,19 @@ struct ContentView: View {
                 Section {
                     LabeledContent("Bundle ID", value: Bundle.main.bundleIdentifier ?? "unknown")
                     LabeledContent("Health source name", value: HKSource.default().name)
+                    LabeledContent("Health source ID", value: HKSource.default().bundleIdentifier)
+                    LabeledContent("Display name", value: info("CFBundleDisplayName"))
+                    LabeledContent("Bundle name", value: info("CFBundleName"))
+                    LabeledContent("Executable", value: info("CFBundleExecutable"))
                     LabeledContent("Version", value: "\(info("CFBundleShortVersionString")) (\(info("CFBundleVersion")))")
+                    LabeledContent("Built as", value: "0.0.1 (1)")
                 } header: {
                     Text("About this build")
                 } footer: {
-                    Text("Bundle ID is the one Signulous assigned when signing. Health source name is how Apple Health labels this app's data.")
+                    Text("Values as installed, after Signulous signing. \"Built as\" is the version GitHub built; if Version differs, Signulous rewrote the app's info.")
                 }
             }
             .navigationTitle("Andrew's SportTread")
-            .sheet(isPresented: $pickingFolder) {
-                FolderPicker(
-                    onPick: { url in
-                        pickingFolder = false
-                        dataFolder.use(url)
-                    },
-                    onCancel: {
-                        pickingFolder = false
-                        dataFolder.message = "No folder picked"
-                    })
-                    .ignoresSafeArea()
-            }
             .confirmationDialog("Delete all test workouts saved by this app?", isPresented: $confirmingDelete,
                                 titleVisibility: .visible) {
                 Button("Delete", role: .destructive) { Task { await health.deleteTestWorkouts() } }
