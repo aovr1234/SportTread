@@ -1,4 +1,9 @@
+import HealthKit
 import SwiftUI
+
+private func info(_ key: String) -> String {
+    Bundle.main.object(forInfoDictionaryKey: key) as? String ?? "?"
+}
 
 /// Milestone 0 test screen: one section per thing Signulous signing must not break.
 struct ContentView: View {
@@ -65,6 +70,16 @@ struct ContentView: View {
                     Text("4 · Data folder")
                 } footer: {
                     Text("Go to iCloud Drive and tap Open. The app creates a SportTread folder there. After reinstalling, do the same and your data is restored.")
+                }
+
+                Section {
+                    LabeledContent("Bundle ID", value: Bundle.main.bundleIdentifier ?? "unknown")
+                    LabeledContent("Health source name", value: HKSource.default().name)
+                    LabeledContent("Version", value: "\(info("CFBundleShortVersionString")) (\(info("CFBundleVersion")))")
+                } header: {
+                    Text("About this build")
+                } footer: {
+                    Text("Bundle ID is the one Signulous assigned when signing. Health source name is how Apple Health labels this app's data.")
                 }
             }
             .navigationTitle("Andrew's SportTread")
