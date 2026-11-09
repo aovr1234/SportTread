@@ -1,6 +1,23 @@
 import ActivityKit
 import Foundation
 
+/// What happened the last time the app asked iOS for a Live Activity, shown in Setup.
+@MainActor
+final class LiveActivityStatus: ObservableObject {
+    static let shared = LiveActivityStatus()
+
+    @Published var lastResult = "Not requested yet"
+
+    var enabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
+
+    /// App extensions that survived signing (the Live Activity needs SportTreadLiveActivity.appex).
+    var extensions: [String] {
+        guard let url = Bundle.main.builtInPlugInsURL,
+              let names = try? FileManager.default.contentsOfDirectory(atPath: url.path) else { return [] }
+        return names.filter { $0.hasSuffix(".appex") }.sorted()
+    }
+}
+
 /// Starts, updates and ends the workout's Live Activity (Lock Screen and Dynamic Island).
 /// Updates are rate-limited: step, pause and finish changes go out at once; speed or incline
 /// changes at most every 3 s; otherwise a refresh every 60 s. The countdown ticks on its own.
@@ -14,13 +31,23 @@ final class WorkoutActivity {
 
     func start(name: String, totalSeconds: Int, state: State) {
         end()
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        activity = try? Activity.request(
-            attributes: WorkoutActivityAttributes(workoutName: name, totalSeconds: totalSeconds),
-            content: ActivityContent(state: state, staleDate: nil),
-            pushType: nil)
-        lastSent = state
-        lastSentAt = Date()
+        let status = LiveActivityStatus.shared
+        guard status.enabled else {
+            status.lastResult = "Live Activities are turned off for SportTread (Settings › SportTread)"
+            return
+        }
+        do {
+            let started = try Activity.request(
+                attributes: WorkoutActivityAttributes(workoutName: name, totalSeconds: totalSeconds),
+                content: ActivityContent(state: state, staleDate: nil),
+                pushType: nil)
+            activity = started
+            lastSent = state
+            lastSentAt = Date()
+            status.lastResult = "Started \(Date().formatted(date: .omitted, time: .shortened)) (\(String(describing: started.activityState)))"
+        } catch {
+            status.lastResult = "iOS refused: \(error.localizedDescription) [\(String(describing: error))]"
+        }
     }
 
     func update(_ state: State) {
@@ -44,5 +71,17 @@ final class WorkoutActivity {
         lastSent = nil
         let content = state.map { ActivityContent(state: $0, staleDate: nil) }
         Task { await activity.end(content, dismissalPolicy: content == nil ? .immediate : .after(Date().addingTimeInterval(60))) }
+    }
+
+    /// One-minute demo for Setup, no treadmill needed.
+    func startTest() {
+        let ends = Date().addingTimeInterval(60)
+        start(name: "Live Activity test", totalSeconds: 60, state: State(
+            stepLabel: "Test step", stepEnds: ends, stepRemaining: 60, mph: 3.0, incline: 2.0,
+            progress: 0.3, paused: false, nextLabel: "Cool-down", finished: nil))
+        Task {
+            try? await Task.sleep(for: .seconds(60))
+            end()
+        }
     }
 }

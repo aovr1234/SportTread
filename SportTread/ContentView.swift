@@ -10,7 +10,9 @@ private func info(_ key: String) -> String {
 struct ContentView: View {
     @EnvironmentObject private var health: HealthTest
     @EnvironmentObject private var dataFolder: DataFolder
+    @ObservedObject private var liveActivity = LiveActivityStatus.shared
     @State private var confirmingDelete = false
+    @State private var testActivity = WorkoutActivity()
 
     private func backUp() {
         guard let file = dataFolder.makeBackupFile() else { return }
@@ -32,6 +34,19 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    LabeledContent("Allowed", value: liveActivity.enabled ? "Yes" : "No (Settings › SportTread)")
+                    LabeledContent("Extension", value: liveActivity.extensions.isEmpty
+                                   ? "Missing (removed during signing)"
+                                   : liveActivity.extensions.joined(separator: ", "))
+                    Button("Test Live Activity (1 min)") { testActivity.startTest() }
+                    Text("Last request: \(liveActivity.lastResult)").font(.footnote).foregroundStyle(.secondary)
+                } header: {
+                    Text("Live Activities")
+                } footer: {
+                    Text("After tapping Test, lock the phone: a test activity should show on the Lock Screen for a minute.")
+                }
+
                 Section("1 · Apple Health access") {
                     Button("Request Health access") { Task { await health.requestAccess() } }
                     Text(health.accessStatus).font(.footnote).foregroundStyle(.secondary)
