@@ -23,6 +23,7 @@ final class WorkoutRunner: ObservableObject {
     var onFinish: ((HistoryEntry) -> Void)?
 
     private let treadmill: TreadmillController
+    private let activity = WorkoutActivity()
     private var loop: Task<Void, Never>?
     private var beltStartedAt = Date.distantPast
 
@@ -66,6 +67,7 @@ final class WorkoutRunner: ObservableObject {
         totalElapsed = 0
         treadmill.resetStats()
         phase = .starting
+        activity.start(name: workout.name, totalSeconds: workout.totalSeconds, state: activityState())
         // If the belt is already running (started by hand), keep it going and just apply step 1
         launch(startBelt: !treadmill.isRunning)
     }
@@ -75,6 +77,7 @@ final class WorkoutRunner: ObservableObject {
         loop?.cancel()
         treadmill.stop()
         phase = .paused("Paused")
+        activity.update(activityState())
     }
 
     func resume() {
@@ -84,6 +87,7 @@ final class WorkoutRunner: ObservableObject {
             return
         }
         phase = .starting
+        activity.update(activityState())
         launch(startBelt: true)
     }
 
@@ -93,7 +97,10 @@ final class WorkoutRunner: ObservableObject {
             advance()
         case .paused(let reason):
             moveToNextStep()
-            if isActive { phase = .paused(reason) }
+            if isActive {
+                phase = .paused(reason)
+                activity.update(activityState())
+            }
         default:
             break
         }
@@ -126,12 +133,14 @@ final class WorkoutRunner: ObservableObject {
             guard await waitUntilRunning() else {
                 if !Task.isCancelled {
                     phase = .paused("The belt didn't start. Check the safety key, then Resume.")
+                    activity.update(activityState())
                 }
                 return
             }
         }
         applyStep()
         phase = .running
+        activity.update(activityState())
 
         var last = Date()
         while !Task.isCancelled {
@@ -144,6 +153,7 @@ final class WorkoutRunner: ObservableObject {
             if !treadmill.isReady {
                 loop = nil
                 phase = .paused("Lost the connection. Reconnect on the Treadmill tab, then Resume.")
+                activity.update(activityState())
                 return
             }
             // Grace period: the speed reading takes a moment to reflect a fresh start
@@ -151,6 +161,7 @@ final class WorkoutRunner: ObservableObject {
                 loop = nil
                 treadmill.stop()
                 phase = .paused("The belt stopped (console Stop or safety key). Resume when ready.")
+                activity.update(activityState())
                 return
             }
 
@@ -159,6 +170,7 @@ final class WorkoutRunner: ObservableObject {
             if let step = currentStep, stepElapsed >= Double(step.seconds) {
                 advance()
             }
+            if phase == .running { activity.update(activityState()) }
         }
     }
 
@@ -192,11 +204,28 @@ final class WorkoutRunner: ObservableObject {
         treadmill.setSpeed(step.mph)
     }
 
+    private func activityState() -> WorkoutActivity.State {
+        WorkoutActivity.State(
+            stepLabel: currentStep?.label ?? "",
+            stepEnds: Date().addingTimeInterval(stepRemaining),
+            stepRemaining: Int(stepRemaining.rounded(.up)),
+            mph: treadmill.speedMph ?? currentStep?.mph ?? 0,
+            incline: treadmill.incline ?? currentStep?.incline ?? 0,
+            progress: progress,
+            paused: phase != .running,
+            nextLabel: nextStep?.label,
+            finished: nil)
+    }
+
     private func finish(_ reason: String) {
         loop?.cancel()
         loop = nil
         treadmill.stop()
         phase = .finished(reason)
+        var closing = activityState()
+        closing.finished = reason
+        closing.progress = reason == "Workout complete" ? 1 : progress
+        activity.end(final: closing)
         if let workout {
             onFinish?(HistoryEntry(
                 date: Date(), name: workout.name, plannedSeconds: workout.totalSeconds,

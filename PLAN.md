@@ -20,7 +20,7 @@ Status: milestones 0, 1, 2 passed (2026-11-09); milestone 5 (AI coach) built, te
   - Haptics on step changes, command confirmations and alerts.
   - A 3-2-1 countdown before the belt starts.
 - **Live charts:** HR vs target line, speed/incline area chart (Swift Charts), on the live screen and in history.
-- **Lock screen and Dynamic Island:** a Live Activity with HR, speed and time left, so the phone can stay locked on the treadmill tray.
+- **Lock screen and Dynamic Island:** a Live Activity during workouts (built 2026-11): step, countdown, speed, incline, progress, next step; HR added with the sensor. Runs in a widget extension, which Signulous must sign.
 - **App icon:** a stylised treadmill belt forming a pulse line, volt green on black.
 
 ## Goal

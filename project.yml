@@ -10,17 +10,17 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
     DEVELOPMENT_TEAM: ""
-    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 targets:
   SportTread:
     type: application
     platform: iOS
-    sources: [SportTread]
+    sources: [SportTread, Shared]
     info:
       path: SportTread/Info.plist
       properties:
         CFBundleDisplayName: SportTread
         UILaunchScreen: {}
+        NSSupportsLiveActivities: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSHealthShareUsageDescription: SportTread reads your heart rate and workouts to run heart-rate workouts and show your history.
         NSHealthUpdateUsageDescription: SportTread saves your treadmill workouts, distance and calories to Apple Health.
@@ -45,4 +45,23 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.andrew.sporttread
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      - target: SportTreadLiveActivity
+        embed: true
+
+  SportTreadLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources: [SportTreadLiveActivity, Shared]
+    info:
+      path: SportTreadLiveActivity/Info.plist
+      properties:
+        CFBundleDisplayName: SportTread
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.andrew.sporttread.liveactivity
         TARGETED_DEVICE_FAMILY: "1"

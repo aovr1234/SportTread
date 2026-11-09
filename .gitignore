@@ -2,6 +2,7 @@
 *.xcodeproj/
 SportTread/Info.plist
 SportTread/SportTread.entitlements
+SportTreadLiveActivity/Info.plist
 
 build/
 Payload/

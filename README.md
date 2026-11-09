@@ -19,10 +19,14 @@ Milestone 3 (heart-rate hold) waits for the Bluetooth sensor; milestone 4 (Healt
 | 3 | Try a few requests: different minutes, **Hills** / **Intervals**, **Hard**, a note like "knees are sore" | Each workout matches the request and stays within sensible speeds |
 | 4 | Tap **Save** on a created workout | It appears under **My workouts** on the Workouts tab (swipe left to delete) |
 | 5 | Connect, **Start workout** on a created one, finish or STOP it, and rate the effort | The rating buttons highlight; the next **Recommend** takes it into account |
+| 6 | Start any workout, then lock the phone | **Live Activity** on the Lock Screen: step, countdown, speed/incline, progress, next step. On the Dynamic Island: runner icon and countdown; long-press for details |
+| 7 | Pause, resume, let a step change, then finish | The Live Activity follows each change and shows "Workout complete" for a minute at the end |
 
 ## Repo layout
 - `project.yml`: XcodeGen project (the `.xcodeproj` is generated in CI)
 - `SportTread/`: iPhone app
+- `SportTreadLiveActivity/`: widget extension for the Lock Screen / Dynamic Island Live Activity
+- `Shared/`: code used by both (Live Activity data)
 - `.github/workflows/build.yml`: macOS build → unsigned IPA
 - `web/treadmill.html`: working Web Bluetooth controller (Chrome/Edge)
 - `design/AppIcon.svg`: app icon source (render with `tools/render_icon.py`)
