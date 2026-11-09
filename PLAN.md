@@ -47,9 +47,10 @@ Verified on the user's treadmill, 2026-11-01:
 - Reference implementation: `treadmill.html` (Web Bluetooth version, working).
 - Not done: fan control (not needed).
 
-### 2. Heart rate (optional add-on)
+### 2. Heart rate (optional add-on, deferred until the Bluetooth sensor arrives)
+Removed from the app for now (2026-11). The Bluetooth monitor code is in git history (commit 12afdc8, `HeartRateMonitor.swift`) and comes back when the sensor arrives.
 Setting: **Off** (default), **Apple Watch (via Health)**, or **Bluetooth monitor**. Treadmill workouts work with it off; HR workouts need a source.
-- **Apple Watch (via Health):** the user starts an Indoor Walk/Run in Apple's Workout app; the app reads new HR samples as they sync to Apple Health. Free, but delayed; milestone 0 measures how much.
+- **Apple Watch (via Health):** tested 2026-11: the watch syncs heart rate only after the workout ends, so this can't be a live source. Kept only for reading HR afterwards; heart-rate hold requires a Bluetooth monitor.
 - **Bluetooth monitor:** any standard BLE heart-rate monitor (service 0x180D), about 1 reading/s. A chest strap or armband works. Watch "broadcast" apps (HeartCast, Echo) relay through the iPhone, and an iPhone can't connect to its own Bluetooth broadcast, so they can't feed the app on the same phone.
 - HR hold accepts a reading only if it's at most 15 s old (section 4); a source that's slower than that can show HR but not drive HR hold.
 
@@ -93,7 +94,8 @@ Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR form
 
 ### 5. Apple Health
 - The phone saves one workout per session (indoor walk/run) with treadmill-measured distance.
-- Heart rate: if the Apple Watch's Workout app also recorded the session, Health already has the HR and that workout; the app links to it rather than duplicating HR. With a Bluetooth monitor, the app writes the HR samples itself.
+- Heart rate: from a Bluetooth monitor, the app writes the HR samples into its workout.
+- One recorder per session: SportTread records the workout; don't also start one in Apple's Workout app. No custom duplicate guard. Health's data source priority already keeps daily totals (distance, energy) from double counting, but a second workout would still show in Fitness. Put SportTread (listed as "Spotify", see Decisions) at the top of the Walking + Running Distance sources so treadmill distance wins over the watch estimate.
 - Also written: speed samples, elevation gained (incline × distance), active calories calculated from speed/incline/weight, segments per step, pause/resume events, metadata (indoor, workout name, HR target).
 - Read: weight (calories), age / resting HR / max HR (zones, default max-HR limit), past workouts (history after reinstall).
 
@@ -122,18 +124,26 @@ Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR form
 - Perceived effort: quick 1–10 rating after each workout.
 - Stored with the workout logs in the data folder.
 
-**AI coach (Claude via the Anthropic API)**
+**AI coach (Apple Intelligence, on-device)**
+- Runs on Apple's on-device model (Foundation Models framework, iOS 26+, Apple Intelligence on). The user's iPhone 17 Pro supports it. Free, private, works offline; nothing leaves the phone.
+- Still to confirm: that the framework works in a Signulous-signed app (milestone 5 checks this first).
 - What it does:
-  - Writes the next workout from recent performance, readiness and the user's goal (e.g. "jog a 5K in 8 weeks").
-  - Builds multi-week plans and adapts them to missed days or faster progress.
-  - Writes a short post-workout debrief; the user can ask follow-up questions.
-- What it receives: a compact summary (metrics above, recent workouts, goal, limits). Never raw Health exports, never the API key.
-- What it returns: workouts in the app's step format (structured JSON) plus a short coaching note.
+  - Creates workouts ("routes") from a short request plus the user's history: see **Workout creation** below.
+  - Suggests the next workout after each one, from completion, perceived effort and readiness.
+  - Writes a short post-workout debrief.
+  - Multi-week plans in simple form (e.g. 3 workouts a week, building over 4–8 weeks), regenerated week by week since the model is small.
 - **Safety:** the AI never controls the treadmill. Every AI workout is validated against the same caps and HR rules (section 4) before it can run. Anything outside them is rejected, and the user always sees and starts the workout themselves.
-- Setup:
-  - The user's own Anthropic API key, entered in settings and stored in the iOS Keychain (not in the data folder).
-  - Opt-in, with a clear note that workout summaries are sent to Anthropic.
-- Offline or API unavailable: falls back to rule-based progression (e.g. target hit easily 3 times, so +0.5% incline next time).
+- If Apple Intelligence is off or unavailable: built-in templates plus rule-based progression (e.g. target hit easily 3 times, so +0.5% incline next time).
+- Claude dropped from the plan (2026-11); could return later as an optional upgrade.
+
+**Workout creation ("routes")**
+1. **Ask:** the user picks or types what they want, e.g. "30-minute hill walk, moderate", "intervals, 20 min, push me", "easy recovery". Quick chips for duration, type (walk / jog / intervals / hills) and intensity (easy / moderate / hard).
+2. **Context:** the app gives the model a compact summary: goal, last ~10 workouts (duration, distance, max speed/incline reached, perceived effort, completed or stopped early), the user's limits, and the treadmill's range.
+3. **Structured output:** guided generation fills a fixed workout type (name, short description, steps: duration, speed, incline, label), so the model can only return a valid workout, never free text to parse. Speed, incline and duration are constrained to the allowed ranges.
+4. **Validate:** the app checks every step against the caps, adds a warm-up and cool-down if missing, and limits jumps between steps (e.g. at most +1.5 mph or +3% incline at once).
+5. **Preview:** a speed/incline chart, total time, estimated distance and calories. The user can tweak steps, regenerate, or save.
+6. **Run and learn:** after the workout, a 1–10 effort rating plus what actually happened (completed, stopped early, manual speed changes on the console) feed the next suggestion.
+- Saved workouts go to `workouts/` in the data folder as plain JSON; hand-made workouts use the same editor.
 
 ### 8. Screens
 - **iPhone:** connect, workout list, workout editor, live workout (HR and target, speed, incline, time, distance, current/next step, STOP), history, settings.
@@ -150,9 +160,9 @@ Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR form
 | 0 | Signing and storage test | After a Signulous install: HR shows from the chosen source (and the Health delay is measured); a test workout with treadmill distance appears in Fitness; data survives delete and reinstall (iCloud folder or backup/restore) |
 | 1 | Treadmill control | Phone does start, speed, incline and stop, with live readout matching the console |
 | 2 | Workout engine | A preset interval workout runs by itself, start to finish |
-| 3 | Heart-rate hold | Holds 150 ±5 bpm for 10+ minutes in a real session |
+| 3 | Heart-rate hold (after the Bluetooth sensor arrives) | Holds 150 ±5 bpm for 10+ minutes in a real session |
 | 4 | Health and polish | Full Health write, history, workout editor, backup/restore |
-| 5 | AI coach | Performance metrics trend correctly over several workouts; Claude proposes a next workout that passes the safety checks and runs; offline fallback works |
+| 5 | AI coach | Apple Intelligence works in the Signulous-signed app; it creates a workout from a short request that passes validation and runs; next-workout suggestions follow effort ratings; template fallback works when it's unavailable |
 
 ## Limits of testing
 - No iOS build or simulator on Windows: every build is tested on the user's iPhone.
@@ -163,7 +173,8 @@ Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR form
 - Limits and HR-hold behaviour: common-practice defaults (see section 4), adjustable in settings.
 - Signing: Signulous. It signs for the iPhone only and under a signing ID shared with the user's sideloaded Spotify, so Health labels the app "Spotify" and Health permissions are shared with that app. "Match provisioning identifier" would replace Spotify, so it isn't used.
 - No watch app (Signulous can't sign one); heart rate is an optional add-on (section 2).
-- AI coach: Claude via the user's Anthropic API key, on top of on-device performance tracking (section 7, milestone 5).
+- AI coach: Apple Intelligence on-device (Foundation Models), on top of on-device performance tracking (section 7, milestone 5). Claude dropped.
+- Heart rate: removed from the app until the Bluetooth sensor arrives; HR hold (milestone 3) waits for it.
 
 ## Open questions
 None. The plan is ready for milestone 0.
