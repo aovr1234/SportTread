@@ -3,15 +3,32 @@ import SwiftUI
 
 /// Workout list and detail. Starting a workout opens the live screen (WorkoutLiveView).
 struct WorkoutsView: View {
+    @EnvironmentObject private var library: WorkoutLibrary
+    @EnvironmentObject private var dataFolder: DataFolder
+
     var body: some View {
         NavigationStack {
-            List(Workout.builtIn) { workout in
-                NavigationLink(value: workout) {
-                    WorkoutRow(workout: workout)
+            List {
+                if !library.saved.isEmpty {
+                    Section("My workouts") {
+                        ForEach(library.saved) { workout in
+                            NavigationLink(value: workout) { WorkoutRow(workout: workout) }
+                        }
+                        .onDelete { offsets in
+                            offsets.map { library.saved[$0] }.forEach(library.delete)
+                        }
+                    }
+                }
+                Section("Built-in") {
+                    ForEach(Workout.builtIn) { workout in
+                        NavigationLink(value: workout) { WorkoutRow(workout: workout) }
+                    }
                 }
             }
             .navigationTitle("Workouts")
             .navigationDestination(for: Workout.self) { WorkoutDetailView(workout: $0) }
+            .onAppear { library.reload() }
+            .onChange(of: dataFolder.folderDescription) { library.reload() }
         }
     }
 }
@@ -35,12 +52,20 @@ private struct WorkoutRow: View {
 
 struct WorkoutDetailView: View {
     let workout: Workout
+    /// A workout the coach just created: offer to save it and show how it was made.
+    var isNew = false
     @EnvironmentObject private var treadmill: TreadmillController
     @EnvironmentObject private var runner: WorkoutRunner
+    @EnvironmentObject private var coach: Coach
+    @EnvironmentObject private var library: WorkoutLibrary
+    @State private var saveMessage: String?
 
     var body: some View {
         List {
             Section {
+                if isNew && !coach.note.isEmpty {
+                    Label(coach.note, systemImage: "sparkles").font(.footnote).foregroundStyle(Theme.volt)
+                }
                 Text(workout.summary).foregroundStyle(.secondary)
                 HStack {
                     stat(durationText(workout.totalSeconds), "time")
@@ -63,6 +88,19 @@ struct WorkoutDetailView: View {
             }
         }
         .navigationTitle(workout.name)
+        .toolbar {
+            if isNew {
+                Button(saveMessage == nil ? "Save" : "Saved") {
+                    do {
+                        try library.save(workout)
+                        saveMessage = "Saved to My workouts"
+                    } catch {
+                        saveMessage = "Couldn't save: \(error.localizedDescription)"
+                    }
+                }
+                .disabled(saveMessage != nil)
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 6) {
                 Button {
@@ -78,6 +116,9 @@ struct WorkoutDetailView: View {
                 .disabled(!treadmill.isReady || runner.isActive)
                 if !treadmill.isReady {
                     Text("Connect on the Treadmill tab first").font(.footnote).foregroundStyle(.secondary)
+                }
+                if let saveMessage {
+                    Text(saveMessage).font(.footnote).foregroundStyle(.secondary)
                 }
             }
             .padding()

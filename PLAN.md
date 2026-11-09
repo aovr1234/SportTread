@@ -1,6 +1,6 @@
 # Andrew's SportTread: Plan
 
-Status: milestones 0 and 1 passed (2026-11-09); milestone 2 (workout engine) built, testing. Last updated 2026-11-01.
+Status: milestones 0, 1, 2 passed (2026-11-09); milestone 5 (AI coach) built, testing; milestone 3 waits for the HR sensor; milestone 4 next. Last updated 2026-11-01.
 
 ## Name
 - App name: **Andrew's SportTread** (in-app title, splash, settings, Health source name).
@@ -137,7 +137,7 @@ Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR form
 - Claude dropped from the plan (2026-11); could return later as an optional upgrade.
 
 **Workout creation ("routes")**
-1. **Ask:** the user picks or types what they want, e.g. "30-minute hill walk, moderate", "intervals, 20 min, push me", "easy recovery". Quick chips for duration, type (walk / jog / intervals / hills) and intensity (easy / moderate / hard).
+1. **Ask:** the user picks **how long** first (quick 15/20/30/45/60 or any 10–90 min), then optionally type (**Recommend** lets the coach pick from recent history), intensity and a note. Or types what they want, e.g. "30-minute hill walk, moderate", "intervals, 20 min, push me", "easy recovery". Quick chips for duration, type (walk / jog / intervals / hills) and intensity (easy / moderate / hard).
 2. **Context:** the app gives the model a compact summary: goal, last ~10 workouts (duration, distance, max speed/incline reached, perceived effort, completed or stopped early), the user's limits, and the treadmill's range.
 3. **Structured output:** guided generation fills a fixed workout type (name, short description, steps: duration, speed, incline, label), so the model can only return a valid workout, never free text to parse. Speed, incline and duration are constrained to the allowed ranges.
 4. **Validate:** the app checks every step against the caps, adds a warm-up and cool-down if missing, and limits jumps between steps (e.g. at most +1.5 mph or +3% incline at once).

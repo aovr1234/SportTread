@@ -2,26 +2,23 @@
 
 iPhone app that runs a ProForm 505 CST treadmill without iFit. See [PLAN.md](PLAN.md).
 
-## Current stage: milestone 2 (workout engine)
-Milestone 0 (signing and storage) passed 2026-11-09; milestone 1 (treadmill control) passed 2026-11-09.
+## Current stage: milestone 5 (AI coach)
+Passed so far: milestone 0 (signing and storage), 1 (treadmill control), 2 (workout engine, engine test).
+Milestone 3 (heart-rate hold) waits for the Bluetooth sensor; milestone 4 (Health and polish) comes next.
 
 ### Get the IPA
 1. GitHub → **Actions** → latest **Build unsigned IPA** run → download **SportTread-ipa**.
 2. Unzip it to get `SportTread-unsigned.ipa`.
 3. Upload it to Signulous, sign (no extra options), and install.
 
-### Test on the treadmill
-Connect on the **Treadmill** tab first. Stand on the side rails with the safety key in for the first run.
-
+### Test
 | # | Test | Pass when |
 |---|---|---|
-| 1 | **Workouts** tab → **Engine test** → **Start workout** | Live screen opens; belt starts and changes speed/incline every 30 s; the countdown, progress bar and highlighted step follow along |
-| 2 | During the engine test, tap **Pause**, wait, then **Resume** | Belt stops on Pause; on Resume it restarts and returns to the step's speed and incline; the timer continues where it left off |
-| 3 | Tap **Skip** | Jumps to the next step and applies its speed and incline |
-| 4 | Let it finish | Belt stops; "Workout complete" with time and distance; **Done** closes it |
-| 5 | Start any workout, then press **Stop on the console** | The workout pauses within a few seconds with "The belt stopped…" |
-| 6 | Start any workout, then tap **STOP** in the app | Belt stops; "Ended early" summary |
-| 7 | During a step, change speed on the console | The new speed holds until the next step starts |
+| 1 | **Setup** tab → **About this build** → **Apple Intelligence** | Says "available" (if not, the coach uses its built-in rules; note what it says) |
+| 2 | **Coach** tab → pick **20** minutes, **Recommend**, **Moderate** → **Create workout** | A preview opens; the green note says "Created with Apple Intelligence" (or why the built-in rules were used); total time is 20 min with a warm-up and cool-down |
+| 3 | Try a few requests: different minutes, **Hills** / **Intervals**, **Hard**, a note like "knees are sore" | Each workout matches the request and stays within sensible speeds |
+| 4 | Tap **Save** on a created workout | It appears under **My workouts** on the Workouts tab (swipe left to delete) |
+| 5 | Connect, **Start workout** on a created one, finish or STOP it, and rate the effort | The rating buttons highlight; the next **Recommend** takes it into account |
 
 ## Repo layout
 - `project.yml`: XcodeGen project (the `.xcodeproj` is generated in CI)

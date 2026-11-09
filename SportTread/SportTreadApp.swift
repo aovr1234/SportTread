@@ -4,13 +4,21 @@ import SwiftUI
 struct SportTreadApp: App {
     @StateObject private var treadmill: TreadmillController
     @StateObject private var runner: WorkoutRunner
+    @StateObject private var dataFolder: DataFolder
+    @StateObject private var library: WorkoutLibrary
+    @StateObject private var coach = Coach()
     @StateObject private var health = HealthTest()
-    @StateObject private var dataFolder = DataFolder()
 
     init() {
         let treadmill = TreadmillController()
+        let runner = WorkoutRunner(treadmill: treadmill)
+        let dataFolder = DataFolder()
+        let library = WorkoutLibrary(dataFolder: dataFolder)
+        runner.onFinish = { [weak library] entry in library?.record(entry) }
         _treadmill = StateObject(wrappedValue: treadmill)
-        _runner = StateObject(wrappedValue: WorkoutRunner(treadmill: treadmill))
+        _runner = StateObject(wrappedValue: runner)
+        _dataFolder = StateObject(wrappedValue: dataFolder)
+        _library = StateObject(wrappedValue: library)
     }
 
     var body: some Scene {
@@ -18,6 +26,8 @@ struct SportTreadApp: App {
             TabView {
                 TreadmillView()
                     .tabItem { Label("Treadmill", systemImage: "figure.run") }
+                CreateWorkoutView()
+                    .tabItem { Label("Coach", systemImage: "sparkles") }
                 WorkoutsView()
                     .tabItem { Label("Workouts", systemImage: "list.bullet.rectangle") }
                 ContentView()
@@ -30,15 +40,20 @@ struct SportTreadApp: App {
                 WorkoutLiveView()
                     .environmentObject(treadmill)
                     .environmentObject(runner)
+                    .environmentObject(library)
                     .preferredColorScheme(.dark)
                     .tint(Theme.volt)
             }
             .environmentObject(treadmill)
             .environmentObject(runner)
-            .environmentObject(health)
             .environmentObject(dataFolder)
+            .environmentObject(library)
+            .environmentObject(coach)
+            .environmentObject(health)
             .preferredColorScheme(.dark)
             .tint(Theme.volt)
+            .task { library.reload() }
+            .onChange(of: dataFolder.folderDescription) { library.reload() }  // folder is ready a moment after launch
         }
     }
 }

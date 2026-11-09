@@ -69,6 +69,7 @@ struct ContentView: View {
                 }
 
                 Section {
+                    LabeledContent("Apple Intelligence", value: Coach.appleIntelligenceStatus)
                     LabeledContent("Bundle ID", value: Bundle.main.bundleIdentifier ?? "unknown")
                     LabeledContent("Health source name", value: HKSource.default().name)
                     LabeledContent("Health source ID", value: HKSource.default().bundleIdentifier)

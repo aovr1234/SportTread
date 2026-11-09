@@ -1,0 +1,82 @@
+import SwiftUI
+
+/// Coach tab: pick how long (and optionally type, intensity, a note); the coach creates the workout.
+struct CreateWorkoutView: View {
+    @EnvironmentObject private var coach: Coach
+    @EnvironmentObject private var library: WorkoutLibrary
+    @State private var request = WorkoutRequest()
+    @State private var created: Workout?
+
+    private let quickMinutes = [15, 20, 30, 45, 60]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("How long?") {
+                    HStack(spacing: 8) {
+                        ForEach(quickMinutes, id: \.self) { minutes in
+                            chip("\(minutes)", selected: request.minutes == minutes) { request.minutes = minutes }
+                        }
+                    }
+                    Stepper("\(request.minutes) minutes", value: $request.minutes, in: 10...90, step: 5)
+                }
+
+                Section("What kind?") {
+                    Picker("Type", selection: $request.kind) {
+                        ForEach(WorkoutRequest.Kind.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    Picker("Intensity", selection: $request.intensity) {
+                        ForEach(WorkoutRequest.Intensity.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                Section {
+                    TextField("e.g. knees are sore, or push me today", text: $request.notes, axis: .vertical)
+                        .lineLimit(1...3)
+                } header: {
+                    Text("Anything else? (optional)")
+                }
+
+                Section {
+                    Button {
+                        Task { created = await coach.create(request, history: library.history) }
+                    } label: {
+                        HStack {
+                            Spacer()
+                            if coach.isWorking { ProgressView().padding(.trailing, 6) }
+                            Text(coach.isWorking ? "Creating…" : "Create workout").font(.headline)
+                            Spacer()
+                        }
+                        .frame(minHeight: 44)
+                    }
+                    .disabled(coach.isWorking)
+                } footer: {
+                    Text(footer)
+                }
+            }
+            .navigationTitle("Coach")
+            .navigationDestination(item: $created) { workout in
+                WorkoutDetailView(workout: workout, isNew: true)
+            }
+        }
+    }
+
+    private var footer: String {
+        let source = "Apple Intelligence: \(Coach.appleIntelligenceStatus)."
+        return request.kind == .recommend
+            ? "Recommend picks the type from your recent workouts. \(source)"
+            : source
+    }
+
+    private func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .frame(maxWidth: .infinity, minHeight: 36)
+                .background(selected ? Theme.volt : Color.secondary.opacity(0.2), in: Capsule())
+                .foregroundStyle(selected ? .black : .primary)
+        }
+        .buttonStyle(.plain)
+    }
+}

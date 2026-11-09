@@ -4,6 +4,8 @@ import SwiftUI
 struct WorkoutLiveView: View {
     @EnvironmentObject private var runner: WorkoutRunner
     @EnvironmentObject private var treadmill: TreadmillController
+    @EnvironmentObject private var library: WorkoutLibrary
+    @State private var effort: Int?
 
     var body: some View {
         VStack(spacing: 16) {
@@ -127,6 +129,26 @@ struct WorkoutLiveView: View {
             HStack(spacing: 12) {
                 tile(clock(treadmill.movingSeconds), "moving time")
                 tile(String(format: "%.2f", treadmill.miles), "miles")
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("How hard was it? (1 = very easy, 10 = all out)").font(.subheadline).foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    ForEach(1...10, id: \.self) { value in
+                        Button {
+                            effort = value
+                            library.rateLast(value)
+                        } label: {
+                            Text("\(value)")
+                                .font(.subheadline.weight(.bold).monospacedDigit())
+                                .frame(maxWidth: .infinity, minHeight: 40)
+                                .background(effort == value ? Theme.volt : Color.secondary.opacity(0.2),
+                                            in: RoundedRectangle(cornerRadius: 8))
+                                .foregroundStyle(effort == value ? .black : .primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                Text("The coach uses this to adjust your next workout.").font(.caption).foregroundStyle(.tertiary)
             }
             Spacer()
             Button {

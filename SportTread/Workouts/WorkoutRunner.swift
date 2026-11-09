@@ -19,6 +19,9 @@ final class WorkoutRunner: ObservableObject {
     @Published private(set) var stepElapsed: TimeInterval = 0
     @Published private(set) var totalElapsed: TimeInterval = 0
 
+    /// Called when a workout finishes or is ended early, for the coach's history.
+    var onFinish: ((HistoryEntry) -> Void)?
+
     private let treadmill: TreadmillController
     private var loop: Task<Void, Never>?
     private var beltStartedAt = Date.distantPast
@@ -194,5 +197,11 @@ final class WorkoutRunner: ObservableObject {
         loop = nil
         treadmill.stop()
         phase = .finished(reason)
+        if let workout {
+            onFinish?(HistoryEntry(
+                date: Date(), name: workout.name, plannedSeconds: workout.totalSeconds,
+                seconds: Int(totalElapsed), miles: treadmill.miles, maxMph: workout.maxMph,
+                maxIncline: workout.maxIncline, completed: reason == "Workout complete"))
+        }
     }
 }
