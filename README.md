@@ -2,9 +2,8 @@
 
 iPhone app that runs a ProForm 505 CST treadmill without iFit. See [PLAN.md](PLAN.md).
 
-## Current stage: milestone 1 (treadmill control)
-Milestone 0 (signing and storage) passed on 2026-11-09. The app now controls the treadmill; the
-milestone 0 checks live on in the **Setup** tab.
+## Current stage: milestone 2 (workout engine)
+Milestone 0 (signing and storage) passed 2026-11-09; milestone 1 (treadmill control) passed 2026-11-09.
 
 ### Get the IPA
 1. GitHub → **Actions** → latest **Build unsigned IPA** run → download **SportTread-ipa**.
@@ -12,17 +11,17 @@ milestone 0 checks live on in the **Setup** tab.
 3. Upload it to Signulous, sign (no extra options), and install.
 
 ### Test on the treadmill
-Stand on the side rails with the safety key clipped in for the first runs.
+Connect on the **Treadmill** tab first. Stand on the side rails with the safety key in for the first run.
 
 | # | Test | Pass when |
 |---|---|---|
-| 1 | Treadmill on, other apps closed; tap **Connect** | After about 20 s: "Connected, belt stopped", readings show 0.0 mph |
-| 2 | Tap **Start at 1.0 mph** | Belt starts; app and console both show 1.0 mph; moving time counts up |
-| 3 | Tap **+0.5** a few times, then **3 mph** | Belt follows within a second or two; app matches the console |
-| 4 | Tap **Incline +1** twice, then **−1** twice | Deck rises to 2% and back; the app's incline follows |
-| 5 | Change speed on the console | The app shows the new speed and "Speed changed on the console" |
-| 6 | Tap **STOP** | Belt stops within about a second |
-| 7 | Start again, then **Disconnect** | The app stops the belt first, then disconnects |
+| 1 | **Workouts** tab → **Engine test** → **Start workout** | Live screen opens; belt starts and changes speed/incline every 30 s; the countdown, progress bar and highlighted step follow along |
+| 2 | During the engine test, tap **Pause**, wait, then **Resume** | Belt stops on Pause; on Resume it restarts and returns to the step's speed and incline; the timer continues where it left off |
+| 3 | Tap **Skip** | Jumps to the next step and applies its speed and incline |
+| 4 | Let it finish | Belt stops; "Workout complete" with time and distance; **Done** closes it |
+| 5 | Start any workout, then press **Stop on the console** | The workout pauses within a few seconds with "The belt stopped…" |
+| 6 | Start any workout, then tap **STOP** in the app | Belt stops; "Ended early" summary |
+| 7 | During a step, change speed on the console | The new speed holds until the next step starts |
 
 ## Repo layout
 - `project.yml`: XcodeGen project (the `.xcodeproj` is generated in CI)

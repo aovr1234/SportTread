@@ -1,6 +1,6 @@
 # Andrew's SportTread: Plan
 
-Status: milestone 0 passed (2026-11-09); milestone 1 (treadmill control) built, testing. Last updated 2026-11-01.
+Status: milestones 0 and 1 passed (2026-11-09); milestone 2 (workout engine) built, testing. Last updated 2026-11-01.
 
 ## Name
 - App name: **Andrew's SportTread** (in-app title, splash, settings, Health source name).

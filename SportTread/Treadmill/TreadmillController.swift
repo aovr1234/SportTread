@@ -98,9 +98,10 @@ final class TreadmillController: NSObject, ObservableObject {
 
     // MARK: Commands
 
-    func start() {
+    /// Starts the belt at 1.0 mph. `resetStats: false` keeps time and distance (resuming a workout).
+    func start(resetStats: Bool = true) {
         guard isReady else { return }
-        resetWorkout()
+        if resetStats { self.resetStats() }
         targetMph = (1.0, Date())
         enqueue("Start", TreadmillProtocol.startFrames)
         enqueue("Speed 1.0 mph", TreadmillProtocol.speedFrames(mph: 1.0), after: 1.5)
@@ -155,7 +156,7 @@ final class TreadmillController: NSObject, ObservableObject {
         queue.append(Job(label: label, frames: frames, notBefore: Date().addingTimeInterval(delay)))
     }
 
-    private func resetWorkout() {
+    func resetStats() {
         movingSeconds = 0
         miles = 0
     }
