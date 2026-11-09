@@ -1,0 +1,336 @@
+import CoreBluetooth
+import Foundation
+
+/// Connects to the treadmill, runs the handshake, polls status continuously and sends commands
+/// between poll messages (a 3-frame poll must never be split, or the console rejects and disconnects).
+@MainActor
+final class TreadmillController: NSObject, ObservableObject {
+    enum State: Equatable {
+        case idle
+        case unavailable(String)
+        case scanning
+        case connecting
+        case handshaking
+        case ready
+        case disconnected
+    }
+
+    static let minMph = 0.5
+    static let maxMph = 10.0
+    static let maxIncline = 10.0
+
+    @Published private(set) var state: State = .idle
+    @Published private(set) var speedMph: Double?
+    @Published private(set) var incline: Double?
+    @Published private(set) var movingSeconds: TimeInterval = 0
+    @Published private(set) var miles: Double = 0
+    @Published private(set) var lastEvent = ""
+
+    var isReady: Bool { state == .ready }
+    var isRunning: Bool { (speedMph ?? 0) > 0 }
+
+    private struct Job {
+        let label: String
+        let frames: [Data]
+        let notBefore: Date
+    }
+
+    private let service = CBUUID(string: TreadmillProtocol.serviceUUID)
+    private let txID = CBUUID(string: TreadmillProtocol.txUUID)
+    private let rxID = CBUUID(string: TreadmillProtocol.rxUUID)
+
+    private var central: CBCentralManager?
+    private var peripheral: CBPeripheral?
+    private var tx: CBCharacteristic?
+    private var session: Task<Void, Never>?
+    private var queue: [Job] = []
+    private var pendingWrite: CheckedContinuation<Void, Never>?
+    private var pendingWriteID = 0
+    private var lastStatusAt: Date?
+    // Targets of recent commands, so repeated taps build on the target, not a stale reading
+    private var targetMph: (value: Double, at: Date)?
+    private var targetIncline: (value: Double, at: Date)?
+
+    // MARK: Connection
+
+    func connect() {
+        lastEvent = ""
+        if let central, central.state == .poweredOn {
+            scan()
+        } else if central == nil {
+            central = CBCentralManager(delegate: self, queue: nil)  // scans once powered on
+        }
+    }
+
+    func disconnect() {
+        guard isRunning else {
+            teardown(reason: "Disconnected")
+            return
+        }
+        stop()
+        Task {
+            try? await Task.sleep(for: .seconds(2))  // let the stop command go out first
+            teardown(reason: "Stopped and disconnected")
+        }
+    }
+
+    private func scan() {
+        guard let central else { return }
+        state = .scanning
+        central.scanForPeripherals(withServices: [service])
+    }
+
+    private func teardown(reason: String) {
+        session?.cancel()
+        session = nil
+        finishWrite(id: pendingWriteID)
+        queue.removeAll()
+        if let peripheral { central?.cancelPeripheralConnection(peripheral) }
+        central?.stopScan()
+        peripheral = nil
+        tx = nil
+        speedMph = nil
+        incline = nil
+        lastStatusAt = nil
+        state = .disconnected
+        lastEvent = reason
+    }
+
+    // MARK: Commands
+
+    func start() {
+        guard isReady else { return }
+        resetWorkout()
+        targetMph = (1.0, Date())
+        enqueue("Start", TreadmillProtocol.startFrames)
+        enqueue("Speed 1.0 mph", TreadmillProtocol.speedFrames(mph: 1.0), after: 1.5)
+    }
+
+    /// Stops the belt; drops anything still queued.
+    func stop() {
+        guard isReady else { return }
+        queue.removeAll()
+        targetMph = nil
+        enqueue("Stop", TreadmillProtocol.stopFrames)
+    }
+
+    func setSpeed(_ mph: Double) {
+        let value = (mph * 10).rounded() / 10
+        guard (Self.minMph...Self.maxMph).contains(value) else {
+            lastEvent = "Speed must be \(Self.minMph)–\(Self.maxMph) mph"
+            return
+        }
+        guard isRunning else {
+            lastEvent = "Press Start first"
+            return
+        }
+        targetMph = (value, Date())
+        enqueue(String(format: "Speed %.1f mph", value), TreadmillProtocol.speedFrames(mph: value))
+    }
+
+    func changeSpeed(by delta: Double) {
+        setSpeed(current(targetMph, reading: speedMph) + delta)
+    }
+
+    func setIncline(_ percent: Double) {
+        let value = (percent * 2).rounded() / 2
+        guard (0...Self.maxIncline).contains(value) else {
+            lastEvent = "Incline must be 0–\(Int(Self.maxIncline))%"
+            return
+        }
+        targetIncline = (value, Date())
+        enqueue(String(format: "Incline %.1f%%", value), TreadmillProtocol.inclineFrames(percent: value))
+    }
+
+    func changeIncline(by delta: Double) {
+        setIncline(current(targetIncline, reading: incline) + delta)
+    }
+
+    private func current(_ target: (value: Double, at: Date)?, reading: Double?) -> Double {
+        if let target, Date().timeIntervalSince(target.at) < 4 { return target.value }
+        return reading ?? 0
+    }
+
+    private func enqueue(_ label: String, _ frames: [Data], after delay: TimeInterval = 0) {
+        queue.append(Job(label: label, frames: frames, notBefore: Date().addingTimeInterval(delay)))
+    }
+
+    private func resetWorkout() {
+        movingSeconds = 0
+        miles = 0
+    }
+
+    // MARK: Session loop
+
+    private func runSession() {
+        session?.cancel()
+        state = .handshaking
+        session = Task {
+            for frame in TreadmillProtocol.initFrames {
+                if Task.isCancelled { return }
+                await write(frame)
+                try? await Task.sleep(for: .milliseconds(600))
+            }
+            if Task.isCancelled { return }
+            state = .ready
+            lastEvent = "Connected"
+            var index = 0
+            while !Task.isCancelled {
+                if index % 3 == 0, let job = queue.first, Date() >= job.notBefore {
+                    queue.removeFirst()
+                    lastEvent = job.label
+                    for frame in job.frames {
+                        await write(frame)
+                        try? await Task.sleep(for: .milliseconds(200))
+                    }
+                    continue
+                }
+                await write(TreadmillProtocol.pollFrames[index % TreadmillProtocol.pollFrames.count])
+                index += 1
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+        }
+    }
+
+    /// Write with response; continues on the console's acknowledgement or after 1 s.
+    private func write(_ frame: Data) async {
+        guard let peripheral, let tx else { return }
+        pendingWriteID += 1
+        let id = pendingWriteID
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            pendingWrite = continuation
+            peripheral.writeValue(frame, for: tx, type: .withResponse)
+            Task {
+                try? await Task.sleep(for: .seconds(1))
+                finishWrite(id: id)
+            }
+        }
+    }
+
+    private func finishWrite(id: Int) {
+        guard id == pendingWriteID, let continuation = pendingWrite else { return }
+        pendingWrite = nil
+        continuation.resume()
+    }
+
+    // MARK: Incoming data
+
+    private func handle(_ data: Data) {
+        guard state == .ready else { return }  // handshake replies aren't status frames
+        if let code = TreadmillProtocol.refusal(from: data) {
+            lastEvent = "Treadmill refused a command (status \(String(format: "%02x", code)))"
+            return
+        }
+        guard let status = TreadmillProtocol.status(from: data) else { return }
+        let now = Date()
+        let mph = status.speedKmh / TreadmillProtocol.kmhPerMph
+
+        if let last = lastStatusAt, let previous = speedMph, previous > 0 {
+            let seconds = now.timeIntervalSince(last)
+            movingSeconds += seconds
+            miles += previous * seconds / 3600
+        }
+        // A change nobody commanded from the app in the last 4 s came from the console
+        if let previous = speedMph, abs(mph - previous) >= 0.05, targetMph.map({ now.timeIntervalSince($0.at) > 4 }) ?? true {
+            lastEvent = mph == 0 ? "Stopped on the console" : String(format: "Speed changed on the console: %.1f mph", mph)
+        }
+        if let previous = incline, abs(status.incline - previous) >= 0.05,
+           targetIncline.map({ now.timeIntervalSince($0.at) > 4 }) ?? true {
+            lastEvent = String(format: "Incline changed on the console: %.1f%%", status.incline)
+        }
+
+        lastStatusAt = now
+        speedMph = mph
+        incline = status.incline
+    }
+}
+
+// CoreBluetooth calls these on the main queue (queue: nil), so assuming main-actor isolation is safe.
+extension TreadmillController: CBCentralManagerDelegate, CBPeripheralDelegate {
+    nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        MainActor.assumeIsolated {
+            switch central.state {
+            case .poweredOn:
+                if peripheral == nil { scan() }
+            case .unauthorized:
+                state = .unavailable("Allow Bluetooth for SportTread in Settings")
+            case .poweredOff:
+                state = .unavailable("Bluetooth is off")
+            default:
+                state = .unavailable("Bluetooth isn't available")
+            }
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
+                                    advertisementData: [String: Any], rssi RSSI: NSNumber) {
+        MainActor.assumeIsolated {
+            guard self.peripheral == nil else { return }
+            central.stopScan()
+            self.peripheral = peripheral
+            state = .connecting
+            central.connect(peripheral)
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        MainActor.assumeIsolated {
+            peripheral.delegate = self
+            peripheral.discoverServices([service])
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        MainActor.assumeIsolated { teardown(reason: "Couldn't connect. Is another app connected to the treadmill?") }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral,
+                                    error: Error?) {
+        MainActor.assumeIsolated {
+            guard self.peripheral != nil else { return }  // we disconnected on purpose
+            teardown(reason: "Lost the connection. Use the console Stop if the belt is moving.")
+        }
+    }
+
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        MainActor.assumeIsolated {
+            guard let svc = peripheral.services?.first(where: { $0.uuid == service }) else {
+                teardown(reason: "This device isn't the treadmill")
+                return
+            }
+            peripheral.discoverCharacteristics([txID, rxID], for: svc)
+        }
+    }
+
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService,
+                                error: Error?) {
+        MainActor.assumeIsolated {
+            let chars = service.characteristics ?? []
+            guard let tx = chars.first(where: { $0.uuid == txID }), let rx = chars.first(where: { $0.uuid == rxID }) else {
+                teardown(reason: "The treadmill's control channel is missing")
+                return
+            }
+            self.tx = tx
+            peripheral.setNotifyValue(true, for: rx)
+        }
+    }
+
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic,
+                                error: Error?) {
+        MainActor.assumeIsolated {
+            if characteristic.uuid == rxID, characteristic.isNotifying, session == nil {
+                runSession()
+            }
+        }
+    }
+
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        MainActor.assumeIsolated { finishWrite(id: pendingWriteID) }
+    }
+
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        MainActor.assumeIsolated {
+            if characteristic.uuid == rxID, let data = characteristic.value { handle(data) }
+        }
+    }
+}

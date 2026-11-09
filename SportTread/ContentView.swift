@@ -6,7 +6,7 @@ private func info(_ key: String) -> String {
     Bundle.main.object(forInfoDictionaryKey: key) as? String ?? "?"
 }
 
-/// Milestone 0 test screen: one section per thing Signulous signing must not break.
+/// Setup tab: Health access, the data folder and build info (the milestone 0 checks).
 struct ContentView: View {
     @EnvironmentObject private var health: HealthTest
     @EnvironmentObject private var dataFolder: DataFolder
@@ -83,7 +83,7 @@ struct ContentView: View {
                     Text("Values as installed, after Signulous signing. \"Built as\" is the version GitHub built; if Version differs, Signulous rewrote the app's info.")
                 }
             }
-            .navigationTitle("Andrew's SportTread")
+            .navigationTitle("Setup")
             .confirmationDialog("Delete all test workouts saved by this app?", isPresented: $confirmingDelete,
                                 titleVisibility: .visible) {
                 Button("Delete", role: .destructive) { Task { await health.deleteTestWorkouts() } }

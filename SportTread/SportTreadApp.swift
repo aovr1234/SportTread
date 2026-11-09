@@ -2,16 +2,23 @@ import SwiftUI
 
 @main
 struct SportTreadApp: App {
+    @StateObject private var treadmill = TreadmillController()
     @StateObject private var health = HealthTest()
     @StateObject private var dataFolder = DataFolder()
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environmentObject(health)
-                .environmentObject(dataFolder)
-                .preferredColorScheme(.dark)
-                .tint(Theme.volt)
+            TabView {
+                TreadmillView()
+                    .tabItem { Label("Treadmill", systemImage: "figure.run") }
+                ContentView()
+                    .tabItem { Label("Setup", systemImage: "gearshape") }
+            }
+            .environmentObject(treadmill)
+            .environmentObject(health)
+            .environmentObject(dataFolder)
+            .preferredColorScheme(.dark)
+            .tint(Theme.volt)
         }
     }
 }
