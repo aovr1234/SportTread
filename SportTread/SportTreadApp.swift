@@ -7,6 +7,7 @@ struct SportTreadApp: App {
     @StateObject private var dataFolder: DataFolder
     @StateObject private var library: WorkoutLibrary
     @StateObject private var coach = Coach()
+    @StateObject private var liveCoach = LiveCoach()
     @StateObject private var health = HealthTest()
 
     init() {
@@ -42,6 +43,7 @@ struct SportTreadApp: App {
                     .environmentObject(treadmill)
                     .environmentObject(runner)
                     .environmentObject(library)
+                    .environmentObject(liveCoach)
                     .preferredColorScheme(.dark)
                     .tint(Theme.lime)
             }

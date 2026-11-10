@@ -19,7 +19,7 @@ final class WorkoutRunner: ObservableObject {
     struct Offer: Identifiable, Equatable {
         enum Action: Equatable {
             case shiftSpeed(Double)
-            case replaceRemaining([WorkoutStep])
+            case edit(remaining: [WorkoutStep], currentMph: Double?, currentIncline: Double?)
         }
 
         let id = UUID()
@@ -36,6 +36,14 @@ final class WorkoutRunner: ObservableObject {
     @Published private(set) var totalElapsed: TimeInterval = 0
     @Published private(set) var deviations: [Deviation] = []
     @Published private(set) var offer: Offer?
+    /// A check-in ("How's it feeling?") is waiting for an answer
+    @Published private(set) var checkInDue = false
+
+    /// Minutes between check-ins; 0 = off. Set on the Coach tab.
+    static let checkInKey = "checkInMinutes"
+    private var lastCheckInAt: TimeInterval = 0
+    private var offeredEaseOff = false
+    private var offeredShorten = false
 
     /// Called when a workout finishes or is ended early, for history.
     var onFinish: ((HistoryEntry) -> Void)?
@@ -103,6 +111,10 @@ final class WorkoutRunner: ObservableObject {
         totalElapsed = 0
         deviations = []
         offer = nil
+        checkInDue = false
+        lastCheckInAt = 0
+        offeredEaseOff = false
+        offeredShorten = false
         treadmill.workoutActive = true
         treadmill.resetStats()
         phase = .starting
@@ -136,6 +148,7 @@ final class WorkoutRunner: ObservableObject {
     func skip() {
         guard let step = currentStep else { return }
         note(.skip, "skipped \(step.label)")
+        offerShortenIfSkipping()
         switch phase {
         case .running:
             advance()
@@ -191,20 +204,73 @@ final class WorkoutRunner: ObservableObject {
 
     func acceptOffer() {
         guard let offer, var workout else { return }
-        let start = stepIndex + 1
+        self.offer = nil
         switch offer.action {
         case .shiftSpeed(let delta):
+            let start = stepIndex + 1
             if start < workout.steps.count {
                 for i in start..<workout.steps.count { workout.steps[i].mph += delta }
             }
-        case .replaceRemaining(let steps):
-            workout.steps = Array(workout.steps.prefix(start)) + steps
+            workout.steps = SafetyCheck.clamped(workout.steps)
+            self.workout = workout
+            note(.adjustRest, offer.note)
+            activity.update(activityState())
+        case .edit(let remaining, let mph, let incline):
+            applyEdit(remaining: remaining, currentMph: mph, currentIncline: incline, note: offer.note)
         }
+    }
+
+    /// Replaces the remaining steps and optionally changes the current step now (AI or rule edits).
+    func applyEdit(remaining: [WorkoutStep], currentMph: Double?, currentIncline: Double?, note detail: String) {
+        guard isActive, var workout else { return }
+        let start = stepIndex + 1
+        workout.steps = SafetyCheck.clamped(Array(workout.steps.prefix(start)) + remaining)
+        if let mph = currentMph { workout.steps[stepIndex].mph = mph }
+        if let incline = currentIncline { workout.steps[stepIndex].incline = incline }
         workout.steps = SafetyCheck.clamped(workout.steps)
         self.workout = workout
-        note(.adjustRest, offer.note)
-        self.offer = nil
+        note(.aiEdit, detail)
+        if phase == .running, let step = currentStep {
+            if currentMph != nil {
+                treadmill.setSpeed(step.mph)
+                expectedMph = step.mph
+            }
+            if currentIncline != nil {
+                treadmill.setIncline(step.incline)
+                expectedIncline = step.incline
+            }
+            commandedAt = Date()
+        }
         activity.update(activityState())
+    }
+
+    // MARK: Check-ins
+
+    /// Answer to "How's it feeling?": Hard eases off right away, Easy offers a harder rest (one tap), Good changes nothing.
+    func answerCheckIn(_ feeling: String) {
+        checkInDue = false
+        lastCheckInAt = totalElapsed
+        note(.checkIn, feeling.lowercased())
+        guard let current = currentStep else { return }
+        switch feeling {
+        case "Hard":
+            let easier = LiveCoach.rules(.easier, current: current, remaining: remainingSteps)
+            applyEdit(remaining: easier.remaining, currentMph: easier.currentMph, currentIncline: easier.currentIncline,
+                      note: "check-in hard: eased off")
+        case "Easy":
+            let harder = LiveCoach.rules(.harder, current: current, remaining: remainingSteps)
+            present(Offer(message: "Feeling easy? Make it a bit harder (+0.3 mph, +1%) from now on?",
+                          action: .edit(remaining: harder.remaining, currentMph: harder.currentMph,
+                                        currentIncline: harder.currentIncline),
+                          note: "check-in easy: made it harder"))
+        default:
+            break
+        }
+    }
+
+    func dismissCheckIn() {
+        checkInDue = false
+        lastCheckInAt = totalElapsed
     }
 
     func dismissOffer() {
@@ -271,6 +337,11 @@ final class WorkoutRunner: ObservableObject {
             detectConsoleChanges(now: now)
             stepElapsed += delta
             totalElapsed += delta
+            let checkInMinutes = UserDefaults.standard.integer(forKey: Self.checkInKey)
+            if checkInMinutes > 0, !checkInDue, offer == nil,
+               totalElapsed - lastCheckInAt >= Double(checkInMinutes * 60), !remainingSteps.isEmpty {
+                checkInDue = true
+            }
             if let step = currentStep, stepElapsed >= Double(step.seconds) {
                 advance()
             }
@@ -375,6 +446,34 @@ final class WorkoutRunner: ObservableObject {
         note(.speed, String(format: "speed %.1f → %.1f mph %@", expectedMph, value, source), delta: delta)
         expectedMph = value
         offerAdjustRestIfRepeated()
+        offerEaseOffIfSlowingDown()
+    }
+
+    /// Three or more slow-downs in a workout → offer to lower the rest by their average (once).
+    private func offerEaseOffIfSlowingDown() {
+        guard offer == nil, !offeredEaseOff, !remainingSteps.isEmpty else { return }
+        let slowdowns = deviations.filter { $0.kind == .speed }.compactMap(\.delta).filter { $0 < 0 }
+        guard slowdowns.count >= 3 else { return }
+        offeredEaseOff = true
+        let shift = max(-1.0, (slowdowns.reduce(0, +) / Double(slowdowns.count) * 10).rounded() / 10)
+        let amount = String(format: "%.1f", abs(shift))
+        present(Offer(
+            message: "You've slowed down \(slowdowns.count) times. Lower the rest of the workout by \(amount) mph?",
+            action: .shiftSpeed(shift),
+            note: "lowered the rest by \(amount) mph after repeated slow-downs"))
+    }
+
+    /// Two skipped steps → offer to shorten the rest by 20% (once).
+    private func offerShortenIfSkipping() {
+        guard offer == nil, !offeredShorten, let current = currentStep, remainingSteps.count > 1 else { return }
+        guard deviations.filter({ $0.kind == .skip }).count >= 2 else { return }
+        offeredShorten = true
+        let shorter = LiveCoach.rules(.shorter, current: current, remaining: Array(remainingSteps.dropFirst()))
+        let next = Array(remainingSteps.prefix(1))
+        present(Offer(
+            message: "You've skipped two steps. Shorten the rest of the workout by 20%?",
+            action: .edit(remaining: next + shorter.remaining, currentMph: nil, currentIncline: nil),
+            note: "shortened the rest by 20% after skipping"))
     }
 
     private func recordInclineChange(to value: Double, source: String) {
@@ -425,6 +524,7 @@ final class WorkoutRunner: ObservableObject {
         treadmill.workoutActive = false
         phase = .finished(reason)
         offer = nil
+        checkInDue = false
         var closing = activityState()
         closing.finished = reason
         closing.progress = reason == "Workout complete" ? 1 : progress

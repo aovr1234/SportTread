@@ -28,6 +28,8 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSHealthShareUsageDescription: SportTread reads your heart rate and workouts to run heart-rate workouts and show your history.
         NSHealthUpdateUsageDescription: SportTread saves your treadmill workouts, distance and calories to Apple Health.
+        NSMicrophoneUsageDescription: SportTread listens while you hold the mic button, so you can ask the coach to change your workout.
+        NSSpeechRecognitionUsageDescription: SportTread turns what you say into text on your iPhone, so you can ask the coach to change your workout.
         NSBluetoothAlwaysUsageDescription: SportTread connects to your treadmill and, if you use one, a Bluetooth heart-rate monitor.
         # Show the app's own folder in Files › On My iPhone › SportTread
         UIFileSharingEnabled: true

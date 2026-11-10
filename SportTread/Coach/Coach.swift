@@ -110,7 +110,8 @@ enum AppleIntelligence {
         let recent = history.suffix(5).map { entry in
             let effort = entry.effort.map { ", effort \($0)/10" } ?? ""
             let done = entry.completed ? "completed" : "stopped early"
-            return "- \(entry.name): \(entry.seconds / 60) min, top speed \(String(format: "%.1f", entry.maxMph)) mph, \(done)\(effort)"
+            let changes = (entry.deviations ?? []).isEmpty ? "" : "; " + Deviation.summary(entry.deviations ?? [])
+            return "- \(entry.name): \(entry.seconds / 60) min, top speed \(String(format: "%.1f", entry.maxMph)) mph, \(done)\(effort)\(changes)"
         }
         var prompt = """
             Create a \(request.minutes)-minute \(request.intensity.rawValue.lowercased()) \(request.kind.rawValue.lowercased()) treadmill workout.

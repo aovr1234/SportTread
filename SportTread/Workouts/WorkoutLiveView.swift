@@ -5,7 +5,11 @@ struct WorkoutLiveView: View {
     @EnvironmentObject private var runner: WorkoutRunner
     @EnvironmentObject private var treadmill: TreadmillController
     @EnvironmentObject private var library: WorkoutLibrary
+    @EnvironmentObject private var liveCoach: LiveCoach
+    @StateObject private var speech = SpeechInput()
     @State private var effort: Int?
+    @State private var request = ""
+    @State private var coachOpen = false
 
     var body: some View {
         ZStack {
@@ -18,9 +22,13 @@ struct WorkoutLiveView: View {
                     } else {
                         stepCard
                         adjustTiles
+                        if runner.checkInDue {
+                            checkInCard
+                        }
                         if let offer = runner.offer {
                             offerBanner(offer)
                         }
+                        coachPanel
                         nextAndProfile
                         if case .paused(let reason) = runner.phase {
                             if treadmill.isReady {
@@ -38,6 +46,9 @@ struct WorkoutLiveView: View {
                 .animation(.spring(response: 0.45, dampingFraction: 0.85), value: runner.stepIndex)
                 .animation(.spring(response: 0.4, dampingFraction: 0.85), value: runner.offer)
                 .animation(.easeInOut, value: runner.phase)
+                .animation(.easeInOut, value: runner.checkInDue)
+                .animation(.easeInOut, value: coachOpen)
+                .animation(.easeInOut, value: liveCoach.message)
             }
             .scrollIndicators(.hidden)
         }
@@ -153,6 +164,113 @@ struct WorkoutLiveView: View {
         .padding(14)
         .glassCard(tint: Theme.cyan)
         .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    // MARK: Coach
+
+    private var checkInCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("How's it feeling?", systemImage: "hand.wave.fill").font(.subheadline.weight(.semibold))
+                Spacer()
+                Button { runner.dismissCheckIn() } label: { Image(systemName: "xmark") }
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                ForEach(["Easy", "Good", "Hard"], id: \.self) { feeling in
+                    Button(feeling) { runner.answerCheckIn(feeling) }
+                        .buttonStyle(SportButtonStyle(kind: feeling == "Good" ? .go : .neutral, height: 40))
+                }
+            }
+        }
+        .padding(14)
+        .glassCard(tint: Theme.lime)
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    private var coachPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                coachOpen.toggle()
+            } label: {
+                HStack {
+                    Label("Coach", systemImage: "sparkles")
+                        .font(.subheadline.weight(.semibold))
+                        .symbolEffect(.pulse, isActive: liveCoach.isWorking)
+                    Spacer()
+                    if liveCoach.isWorking { ProgressView() }
+                    Image(systemName: coachOpen ? "chevron.up" : "chevron.down").foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+
+            HStack(spacing: 8) {
+                ForEach(LiveCoach.Quick.allCases) { kind in
+                    Button {
+                        Task { await liveCoach.quick(kind, runner: runner) }
+                    } label: {
+                        VStack(spacing: 2) {
+                            Image(systemName: kind.symbol).font(.title3)
+                            Text(kind.rawValue).font(.caption.weight(.semibold))
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 54)
+                    }
+                    .buttonStyle(.plain)
+                    .glassCard(cornerRadius: 14, interactive: true)
+                }
+            }
+            .disabled(liveCoach.isWorking)
+
+            if coachOpen {
+                HStack(spacing: 8) {
+                    TextField("e.g. skip the hills, my knees hurt", text: $request, axis: .vertical)
+                        .lineLimit(1...3)
+                        .padding(10)
+                        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    micButton
+                    Button {
+                        let text = request
+                        request = ""
+                        Task { await liveCoach.ask(text, runner: runner) }
+                    } label: {
+                        Image(systemName: "arrow.up.circle.fill").font(.title)
+                    }
+                    .foregroundStyle(Theme.lime)
+                    .disabled(request.trimmingCharacters(in: .whitespaces).isEmpty || liveCoach.isWorking)
+                }
+                if let problem = speech.problem {
+                    Text(problem).font(.caption).foregroundStyle(.orange)
+                }
+                Text("Easier changes apply right away; harder ones wait for your tap.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            if let message = liveCoach.message {
+                Text(message).font(.footnote).foregroundStyle(Theme.lime).transition(.opacity)
+            }
+        }
+        .padding(14)
+        .glassCard()
+        .onChange(of: speech.transcript) { _, text in
+            if !text.isEmpty { request = text }
+        }
+    }
+
+    /// Hold to talk: listening while pressed, the words land in the box to check before sending.
+    private var micButton: some View {
+        Image(systemName: speech.isListening ? "mic.fill" : "mic")
+            .font(.title2)
+            .foregroundStyle(speech.isListening ? Theme.stop : Theme.lime)
+            .symbolEffect(.pulse, isActive: speech.isListening)
+            .frame(width: 40, height: 40)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        if !speech.isListening { Task { await speech.start() } }
+                    }
+                    .onEnded { _ in speech.stop() })
+            .accessibilityLabel("Hold to talk")
     }
 
     private var nextAndProfile: some View {

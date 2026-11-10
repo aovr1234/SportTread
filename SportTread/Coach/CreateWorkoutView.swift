@@ -5,6 +5,7 @@ struct CreateWorkoutView: View {
     @EnvironmentObject private var coach: Coach
     @EnvironmentObject private var library: WorkoutLibrary
     @State private var request = WorkoutRequest()
+    @AppStorage(WorkoutRunner.checkInKey) private var checkInMinutes = 0
     @State private var created: Workout?
 
     private let quickMinutes = [15, 20, 30, 45, 60]
@@ -29,6 +30,16 @@ struct CreateWorkoutView: View {
                         ForEach(WorkoutRequest.Intensity.allCases) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
+                }
+
+                Section {
+                    Picker("Check-ins during workouts", selection: $checkInMinutes) {
+                        Text("Off").tag(0)
+                        Text("Every 5 min").tag(5)
+                        Text("Every 10 min").tag(10)
+                    }
+                } footer: {
+                    Text("\"How's it feeling?\" Hard eases off right away; Easy offers a harder rest.")
                 }
 
                 Section {
