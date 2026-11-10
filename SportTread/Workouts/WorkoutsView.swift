@@ -103,19 +103,20 @@ struct WorkoutDetailView: View {
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 6) {
-                Button {
-                    runner.start(workout)
-                } label: {
-                    Label("Start workout", systemImage: "play.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 56)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.volt)
-                .foregroundStyle(.black)
-                .disabled(!treadmill.isReady || runner.isActive)
-                if !treadmill.isReady {
-                    Text("Connect on the Treadmill tab first").font(.footnote).foregroundStyle(.secondary)
+                if treadmill.isReady {
+                    Button {
+                        runner.start(workout)
+                    } label: {
+                        Label("Start workout", systemImage: "play.fill")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 56)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.volt)
+                    .foregroundStyle(.black)
+                    .disabled(runner.isActive)
+                } else {
+                    TreadmillConnectBar()
                 }
                 if let saveMessage {
                     Text(saveMessage).font(.footnote).foregroundStyle(.secondary)

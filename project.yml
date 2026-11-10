@@ -6,8 +6,8 @@ options:
   createIntermediateGroups: true
 settings:
   base:
-    MARKETING_VERSION: "0.0.1"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "0.6.0"
+    CURRENT_PROJECT_VERSION: "6"
     SWIFT_VERSION: "5.0"
     DEVELOPMENT_TEAM: ""
 targets:
@@ -19,7 +19,11 @@ targets:
       path: SportTread/Info.plist
       properties:
         CFBundleDisplayName: SportTread
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
+        # Keep talking to the treadmill with the screen locked or in another app
+        UIBackgroundModes: [bluetooth-central]
         NSSupportsLiveActivities: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSHealthShareUsageDescription: SportTread reads your heart rate and workouts to run heart-rate workouts and show your history.
@@ -59,6 +63,8 @@ targets:
       path: SportTreadLiveActivity/Info.plist
       properties:
         CFBundleDisplayName: SportTread
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:

@@ -88,6 +88,7 @@ struct TreadmillView: View {
         case .connecting: "Connecting…"
         case .handshaking: "Connecting (about 20 s)…"
         case .ready: treadmill.isRunning ? "Running" : "Connected, belt stopped"
+        case .reconnecting: "Reconnecting…"
         case .disconnected: "Disconnected"
         }
     }
@@ -95,7 +96,7 @@ struct TreadmillView: View {
     private var statusColor: Color {
         switch treadmill.state {
         case .ready: Theme.volt
-        case .scanning, .connecting, .handshaking: .orange
+        case .scanning, .connecting, .handshaking, .reconnecting: .orange
         default: .gray
         }
     }
@@ -115,7 +116,7 @@ struct TreadmillView: View {
             .buttonStyle(.borderedProminent)
             .tint(Theme.volt)
             .foregroundStyle(.black)
-            .disabled([.scanning, .connecting, .handshaking].contains(treadmill.state))
+            .disabled([.scanning, .connecting, .handshaking, .reconnecting].contains(treadmill.state))
         }
         .padding()
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))

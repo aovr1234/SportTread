@@ -3,6 +3,10 @@ import Foundation
 
 /// Connects to the treadmill, runs the handshake, polls status continuously and sends commands
 /// between poll messages (a 3-frame poll must never be split, or the console rejects and disconnects).
+///
+/// Reliability: runs in the background (bluetooth-central), reconnects by itself after an unexpected
+/// drop, resets a connection that goes silent for 10 s, and restores the connection if iOS relaunches
+/// the app in the background. Only Disconnect (or a fatal error) ends the connection for good.
 @MainActor
 final class TreadmillController: NSObject, ObservableObject {
     enum State: Equatable {
@@ -12,6 +16,7 @@ final class TreadmillController: NSObject, ObservableObject {
         case connecting
         case handshaking
         case ready
+        case reconnecting
         case disconnected
     }
 
@@ -50,19 +55,39 @@ final class TreadmillController: NSObject, ObservableObject {
     // Targets of recent commands, so repeated taps build on the target, not a stale reading
     private var targetMph: (value: Double, at: Date)?
     private var targetIncline: (value: Double, at: Date)?
+    private var readySince: Date?
+
+    private static let restoreID = "SportTreadTreadmill"
+    /// Set while connected, so a background relaunch by iOS restores the connection.
+    private static let wasConnectedKey = "treadmillWasConnected"
+    private static let silenceLimit: TimeInterval = 10
+
+    override init() {
+        super.init()
+        if UserDefaults.standard.bool(forKey: Self.wasConnectedKey) {
+            makeCentral()  // lets iOS hand back a connection it kept while the app was closed
+        }
+    }
 
     // MARK: Connection
 
     func connect() {
         lastEvent = ""
+        UserDefaults.standard.set(true, forKey: Self.wasConnectedKey)
         if let central, central.state == .poweredOn {
-            scan()
+            if let peripheral { reconnect(peripheral, reason: nil) } else { scan() }
         } else if central == nil {
-            central = CBCentralManager(delegate: self, queue: nil)  // scans once powered on
+            makeCentral()  // scans once powered on
         }
     }
 
+    private func makeCentral() {
+        central = CBCentralManager(delegate: self, queue: nil,
+                                   options: [CBCentralManagerOptionRestoreIdentifierKey: Self.restoreID])
+    }
+
     func disconnect() {
+        UserDefaults.standard.set(false, forKey: Self.wasConnectedKey)
         guard isRunning else {
             teardown(reason: "Disconnected")
             return
@@ -80,20 +105,37 @@ final class TreadmillController: NSObject, ObservableObject {
         central.scanForPeripherals(withServices: [service])
     }
 
+    /// Ends the connection for good (Disconnect or a fatal error); no automatic reconnect.
     private func teardown(reason: String) {
+        UserDefaults.standard.set(false, forKey: Self.wasConnectedKey)
+        resetSession()
+        let old = peripheral
+        peripheral = nil  // marks the coming disconnect callback as intentional
+        if let old { central?.cancelPeripheralConnection(old) }
+        central?.stopScan()
+        state = .disconnected
+        lastEvent = reason
+    }
+
+    /// Drops the current session and keeps trying to reconnect to the same treadmill.
+    /// iOS keeps a pending connect alive until the treadmill is back in range.
+    private func reconnect(_ peripheral: CBPeripheral, reason: String?) {
+        resetSession()
+        state = .reconnecting
+        if let reason { lastEvent = reason }
+        central?.connect(peripheral)
+    }
+
+    private func resetSession() {
         session?.cancel()
         session = nil
         finishWrite(id: pendingWriteID)
         queue.removeAll()
-        if let peripheral { central?.cancelPeripheralConnection(peripheral) }
-        central?.stopScan()
-        peripheral = nil
         tx = nil
         speedMph = nil
         incline = nil
         lastStatusAt = nil
-        state = .disconnected
-        lastEvent = reason
+        readySince = nil
     }
 
     // MARK: Commands
@@ -174,9 +216,17 @@ final class TreadmillController: NSObject, ObservableObject {
             }
             if Task.isCancelled { return }
             state = .ready
+            readySince = Date()
             lastEvent = "Connected"
             var index = 0
             while !Task.isCancelled {
+                // Watchdog: a link that looks connected but sends nothing gets reset
+                let heardFrom = lastStatusAt ?? readySince ?? Date()
+                if Date().timeIntervalSince(heardFrom) > Self.silenceLimit, let peripheral {
+                    reconnect(peripheral, reason: "No data from the treadmill for 10 s. Reconnecting…")
+                    central?.cancelPeripheralConnection(peripheral)
+                    return
+                }
                 if index % 3 == 0, let job = queue.first, Date() >= job.notBefore {
                     queue.removeFirst()
                     lastEvent = job.label
@@ -252,7 +302,18 @@ extension TreadmillController: CBCentralManagerDelegate, CBPeripheralDelegate {
         MainActor.assumeIsolated {
             switch central.state {
             case .poweredOn:
-                if peripheral == nil { scan() }
+                if let peripheral {
+                    // Restored or waiting connection: continue it
+                    if peripheral.state == .connected {
+                        state = .connecting
+                        peripheral.delegate = self
+                        peripheral.discoverServices([service])
+                    } else {
+                        reconnect(peripheral, reason: nil)
+                    }
+                } else if UserDefaults.standard.bool(forKey: Self.wasConnectedKey) {
+                    scan()
+                }
             case .unauthorized:
                 state = .unavailable("Allow Bluetooth for SportTread in Settings")
             case .poweredOff:
@@ -260,6 +321,16 @@ extension TreadmillController: CBCentralManagerDelegate, CBPeripheralDelegate {
             default:
                 state = .unavailable("Bluetooth isn't available")
             }
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        MainActor.assumeIsolated {
+            guard let restored = (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral])?.first
+            else { return }
+            peripheral = restored
+            restored.delegate = self
+            lastEvent = "Reconnecting after iOS restarted the app…"
         }
     }
 
@@ -282,14 +353,28 @@ extension TreadmillController: CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        MainActor.assumeIsolated { teardown(reason: "Couldn't connect. Is another app connected to the treadmill?") }
+        MainActor.assumeIsolated {
+            guard self.peripheral === peripheral else { return }
+            if state == .reconnecting {
+                Task {
+                    try? await Task.sleep(for: .seconds(2))
+                    if state == .reconnecting, let current = self.peripheral { central.connect(current) }
+                }
+            } else {
+                teardown(reason: "Couldn't connect. Is another app connected to the treadmill?")
+            }
+        }
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral,
                                     error: Error?) {
         MainActor.assumeIsolated {
-            guard self.peripheral != nil else { return }  // we disconnected on purpose
-            teardown(reason: "Lost the connection. Use the console Stop if the belt is moving.")
+            guard self.peripheral === peripheral else { return }  // we disconnected on purpose
+            if state == .reconnecting {
+                central.connect(peripheral)  // watchdog reset: try again right away
+            } else {
+                reconnect(peripheral, reason: "Connection lost. Reconnecting… (console Stop always works)")
+            }
         }
     }
 

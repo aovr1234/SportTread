@@ -92,11 +92,10 @@ struct ContentView: View {
                     LabeledContent("Bundle name", value: info("CFBundleName"))
                     LabeledContent("Executable", value: info("CFBundleExecutable"))
                     LabeledContent("Version", value: "\(info("CFBundleShortVersionString")) (\(info("CFBundleVersion")))")
-                    LabeledContent("Built as", value: "0.0.1 (1)")
                 } header: {
                     Text("About this build")
                 } footer: {
-                    Text("Values as installed, after Signulous signing. \"Built as\" is the version GitHub built; if Version differs, Signulous rewrote the app's info.")
+                    Text("Values as installed, after Signulous signing.")
                 }
             }
             .navigationTitle("Setup")

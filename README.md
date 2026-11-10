@@ -21,6 +21,9 @@ Milestone 3 (heart-rate hold) waits for the Bluetooth sensor; milestone 4 (Healt
 | 5 | Connect, **Start workout** on a created one, finish or STOP it, and rate the effort | The rating buttons highlight; the next **Recommend** takes it into account |
 | 6 | Start any workout, then lock the phone | **Live Activity** on the Lock Screen: step, countdown, speed/incline, progress, next step. On the Dynamic Island: runner icon and countdown; long-press for details |
 | 7 | Pause, resume, let a step change, then finish | The Live Activity follows each change and shows "Workout complete" for a minute at the end |
+| 8 | Start a workout, lock the phone for a few minutes | Steps keep changing on time while locked; the app is still connected when you unlock |
+| 9 | During a workout, walk the phone out of Bluetooth range (or switch Bluetooth off briefly), then come back | "Reconnecting…", then the workout continues by itself if the belt kept running |
+| 10 | Open a workout while disconnected | "Treadmill disconnected" with a **Connect treadmill** button instead of a greyed-out Start |
 
 ## Repo layout
 - `project.yml`: XcodeGen project (the `.xcodeproj` is generated in CI)

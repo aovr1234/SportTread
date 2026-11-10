@@ -151,9 +151,9 @@ final class WorkoutRunner: ObservableObject {
             last = now
 
             if !treadmill.isReady {
-                loop = nil
-                phase = .paused("Lost the connection. Reconnect on the Treadmill tab, then Resume.")
+                phase = .paused("Connection lost. Reconnecting… the workout continues when it's back.")
                 activity.update(activityState())
+                continueAfterReconnect()
                 return
             }
             // Grace period: the speed reading takes a moment to reflect a fresh start
@@ -171,6 +171,30 @@ final class WorkoutRunner: ObservableObject {
                 advance()
             }
             if phase == .running { activity.update(activityState()) }
+        }
+    }
+
+    /// Waits for the treadmill to reconnect. If the belt kept running, the workout carries on by
+    /// itself; if it stopped, the workout stays paused for the user to Resume.
+    private func continueAfterReconnect() {
+        loop = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard case .paused = phase else { return }
+                guard treadmill.isReady else { continue }
+                for _ in 0..<12 where treadmill.speedMph == nil {  // first status reading, up to 3 s
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+                if Task.isCancelled { return }
+                if treadmill.isRunning {
+                    phase = .starting
+                    launch(startBelt: false)
+                } else {
+                    phase = .paused("Reconnected. The belt stopped, so tap Resume when ready.")
+                    activity.update(activityState())
+                }
+                return
+            }
         }
     }
 

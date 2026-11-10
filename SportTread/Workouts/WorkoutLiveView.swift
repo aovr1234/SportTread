@@ -25,8 +25,12 @@ struct WorkoutLiveView: View {
                     WorkoutProfile(workout: workout, height: 60, showAxes: false, highlight: runner.stepIndex)
                 }
                 if case .paused(let reason) = runner.phase {
-                    Text(reason).font(.subheadline).foregroundStyle(.orange)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if treadmill.isReady {
+                        Text(reason).font(.subheadline).foregroundStyle(.orange)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        TreadmillConnectBar()  // says the treadmill is disconnected and offers Connect
+                    }
                 }
                 Spacer(minLength: 0)
                 controls

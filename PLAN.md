@@ -1,6 +1,6 @@
 # Andrew's SportTread: Plan
 
-Status: milestones 0, 1, 2 passed (2026-11-09); milestone 5 (AI coach) built, testing; milestone 3 waits for the HR sensor; milestone 4 next. Last updated 2026-11-01.
+Status: milestones 0, 1, 2 passed (2026-11-09); milestone 5 (AI coach) passed, Live Activity works; connection reliability built, testing; milestone 3 waits for the HR sensor; milestone 4 next. Last updated 2026-11-01.
 
 ## Name
 - App name: **Andrew's SportTread** (in-app title, splash, settings, Health source name).
@@ -46,6 +46,15 @@ Verified on the user's treadmill, 2026-11-01:
 - Status replies give actual speed and incline (the deck position is tracked live) and show console changes.
 - Reference implementation: `treadmill.html` (Web Bluetooth version, working).
 - Not done: fan control (not needed).
+
+**Connection reliability (no random disconnects)** — built 2026-11:
+- **Background:** `bluetooth-central` background mode, so polling and workouts keep running with the screen locked or in another app.
+- **Auto-reconnect:** an unexpected drop keeps the same treadmill and reconnects by itself ("Reconnecting…"), retrying until it's back in range. Only Disconnect ends the connection for good.
+- **Watchdog:** no status for 10 s while "connected" resets the link and reconnects.
+- **State restoration:** if iOS relaunches the app in the background, the connection is picked back up (CoreBluetooth restore identifier).
+- **Workouts during a drop:** the workout pauses with "Reconnecting…"; when the link is back it continues by itself if the belt kept running, or waits for Resume if the belt stopped.
+- **Clear UI:** wherever the treadmill is needed but not connected, the app says "Treadmill disconnected" and shows a Connect button (no greyed-out buttons).
+- The console Stop button and the safety key always work, connected or not.
 
 ### 2. Heart rate (optional add-on, deferred until the Bluetooth sensor arrives)
 Removed from the app for now (2026-11). The Bluetooth monitor code is in git history (commit 12afdc8, `HeartRateMonitor.swift`) and comes back when the sensor arrives.
