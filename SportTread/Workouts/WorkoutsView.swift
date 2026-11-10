@@ -114,15 +114,17 @@ struct WorkoutDetailView: View {
                 }
             }
             if isNew {
-                Button(saveMessage == nil ? "Save" : "Saved") {
-                    do {
-                        try library.save(workout)
-                        saveMessage = "Saved to My workouts"
-                    } catch {
-                        saveMessage = "Couldn't save: \(error.localizedDescription)"
+                ToolbarItem(placement: .primaryAction) {
+                    Button(saveMessage == nil ? "Save" : "Saved") {
+                        do {
+                            try library.save(workout)
+                            saveMessage = "Saved to My workouts"
+                        } catch {
+                            saveMessage = "Couldn't save: \(error.localizedDescription)"
+                        }
                     }
+                    .disabled(saveMessage != nil)
                 }
-                .disabled(saveMessage != nil)
             }
         }
         .sheet(isPresented: $editing) {
