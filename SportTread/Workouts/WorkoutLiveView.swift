@@ -8,48 +8,63 @@ struct WorkoutLiveView: View {
     @State private var effort: Int?
 
     var body: some View {
-        VStack(spacing: 16) {
-            header
-            if case .finished(let reason) = runner.phase {
-                summary(reason)
-            } else {
-                stepCard
-                liveReadout
-                if let next = runner.nextStep {
-                    Text("Next: \(next.label) · \(String(format: "%.1f", next.mph)) mph · \(String(format: "%g", next.incline))%")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                if let workout = runner.workout {
-                    WorkoutProfile(workout: workout, height: 60, showAxes: false, highlight: runner.stepIndex)
-                }
-                if case .paused(let reason) = runner.phase {
-                    if treadmill.isReady {
-                        Text(reason).font(.subheadline).foregroundStyle(.orange)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+        ZStack {
+            AppBackground()
+            ScrollView {
+                VStack(spacing: 14) {
+                    header
+                    if case .finished(let reason) = runner.phase {
+                        summary(reason)
                     } else {
-                        TreadmillConnectBar()  // says the treadmill is disconnected and offers Connect
+                        stepCard
+                        adjustTiles
+                        if let offer = runner.offer {
+                            offerBanner(offer)
+                        }
+                        nextAndProfile
+                        if case .paused(let reason) = runner.phase {
+                            if treadmill.isReady {
+                                Label(reason, systemImage: "pause.circle.fill")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.orange)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            } else {
+                                TreadmillConnectBar()
+                            }
+                        }
                     }
                 }
-                Spacer(minLength: 0)
-                controls
+                .padding()
+                .animation(.spring(response: 0.45, dampingFraction: 0.85), value: runner.stepIndex)
+                .animation(.spring(response: 0.4, dampingFraction: 0.85), value: runner.offer)
+                .animation(.easeInOut, value: runner.phase)
             }
+            .scrollIndicators(.hidden)
         }
-        .padding()
-        .background(Color.black.ignoresSafeArea())
+        .safeAreaInset(edge: .bottom) {
+            if runner.isActive { controls.padding(.horizontal).padding(.bottom, 8) }
+        }
         .sensoryFeedback(.impact(weight: .heavy), trigger: runner.stepIndex)
         .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
     }
 
+    // MARK: Header
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(runner.workout?.name ?? "Workout").font(.title2.weight(.bold))
+                Text(runner.workout?.name ?? "Workout").font(.title2.weight(.heavy))
                 Spacer()
-                Text(phaseText).font(.subheadline).foregroundStyle(phaseColor)
+                HStack(spacing: 6) {
+                    StatusDot(color: phaseColor, pulsing: runner.phase == .running)
+                        .id(runner.phase == .running)
+                    Text(phaseText).font(.subheadline.weight(.semibold)).foregroundStyle(phaseColor)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .glassCard(cornerRadius: 20)
             }
-            ProgressView(value: runner.progress).tint(Theme.volt)
+            GradientBar(progress: runner.progress)
             HStack {
                 Text(clock(runner.totalElapsed))
                 Spacer()
@@ -72,67 +87,140 @@ struct WorkoutLiveView: View {
 
     private var phaseColor: Color {
         switch runner.phase {
-        case .running: Theme.volt
+        case .running: Theme.lime
         case .paused: .orange
         default: .secondary
         }
     }
 
+    // MARK: Step
+
     private var stepCard: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(runner.currentStep?.label ?? "").font(.headline).foregroundStyle(Theme.volt)
-            Text(clock(runner.stepRemaining))
-                .font(.system(size: 72, weight: .heavy).monospacedDigit())
-                .contentTransition(.numericText())
-            if let step = runner.currentStep {
-                Text("Target \(String(format: "%.1f", step.mph)) mph · \(String(format: "%g", step.incline))% incline")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 18) {
+            ZStack {
+                RingProgress(progress: runner.stepProgress, lineWidth: 12)
+                Text(clock(runner.stepRemaining))
+                    .font(.system(size: 30, weight: .heavy, design: .rounded).monospacedDigit())
+                    .contentTransition(.numericText())
+                    .animation(.snappy, value: Int(runner.stepRemaining))
             }
+            .frame(width: 128, height: 128)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("STEP \(runner.stepIndex + 1) OF \(runner.workout?.steps.count ?? 0)")
+                    .font(.caption2.weight(.semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(.secondary)
+                Text(runner.currentStep?.label ?? "")
+                    .font(.title2.weight(.heavy))
+                    .foregroundStyle(Theme.accent)
+                if let step = runner.currentStep {
+                    Text("Target \(String(format: "%.1f", step.mph)) mph · \(String(format: "%g", step.incline))%")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 18))
+        .padding(16)
+        .glassCard()
+        .id(runner.stepIndex)
+        .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
+                                removal: .move(edge: .leading).combined(with: .opacity)))
     }
 
-    private var liveReadout: some View {
+    private var adjustTiles: some View {
         HStack(spacing: 12) {
-            tile(treadmill.speedMph.map { String(format: "%.1f", $0) } ?? "–", "mph")
-            tile(treadmill.incline.map { String(format: "%.1f", $0) } ?? "–", "% incline")
-            tile(String(format: "%.2f", treadmill.miles), "miles")
+            AdjustTile(title: "Speed", unit: "mph", value: treadmill.speedMph, step: 0.1,
+                       range: TreadmillController.minMph...TreadmillController.maxMph, decimals: 1,
+                       enabled: runner.phase == .running) { runner.adjustSpeed(to: $0) }
+            AdjustTile(title: "Incline", unit: "%", value: treadmill.incline, step: 0.5,
+                       range: 0...TreadmillController.maxIncline, decimals: 1,
+                       enabled: runner.phase == .running) { runner.adjustIncline(to: $0) }
         }
     }
+
+    private func offerBanner(_ offer: WorkoutRunner.Offer) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(offer.message, systemImage: "sparkles")
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 10) {
+                Button("Apply") { runner.acceptOffer() }
+                    .buttonStyle(SportButtonStyle(kind: .go, height: 40))
+                Button("No thanks") { runner.dismissOffer() }
+                    .buttonStyle(SportButtonStyle(kind: .neutral, height: 40))
+            }
+        }
+        .padding(14)
+        .glassCard(tint: Theme.cyan)
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    private var nextAndProfile: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let next = runner.nextStep {
+                HStack {
+                    Text("NEXT").font(.caption2.weight(.semibold)).tracking(1.2).foregroundStyle(.secondary)
+                    Text(next.label).font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Text("\(String(format: "%.1f", next.mph)) mph · \(String(format: "%g", next.incline))%")
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let workout = runner.workout {
+                WorkoutProfile(workout: workout, height: 54, showAxes: false, highlight: runner.stepIndex)
+            }
+        }
+        .padding(14)
+        .glassCard()
+    }
+
+    // MARK: Controls
 
     private var controls: some View {
         VStack(spacing: 10) {
             HStack(spacing: 10) {
                 if case .paused = runner.phase {
-                    wideButton("Resume", systemImage: "play.fill", tint: Theme.volt, dark: true) { runner.resume() }
+                    Button { runner.resume() } label: { Label("Resume", systemImage: "play.fill") }
+                        .buttonStyle(SportButtonStyle(kind: .go, height: 52))
+                    Button { runner.end() } label: { Label("End workout", systemImage: "flag.checkered") }
+                        .buttonStyle(SportButtonStyle(kind: .neutral, height: 52))
                 } else {
-                    wideButton("Pause", systemImage: "pause.fill", tint: .gray, dark: false) { runner.pause() }
+                    Button { runner.pause() } label: { Label("Pause", systemImage: "pause.fill") }
+                        .buttonStyle(SportButtonStyle(kind: .neutral, height: 52))
+                    Button { runner.skip() } label: { Label("Skip", systemImage: "forward.end.fill") }
+                        .buttonStyle(SportButtonStyle(kind: .neutral, height: 52))
                 }
-                wideButton("Skip", systemImage: "forward.end.fill", tint: .gray, dark: false) { runner.skip() }
             }
-            Button(role: .destructive) {
-                runner.end()
-            } label: {
-                Text("STOP").font(.title2.weight(.heavy)).frame(maxWidth: .infinity, minHeight: 64)
+            if !isPaused {
+                Button(role: .destructive) {
+                    runner.pause(reason: "Stopped. Resume, or End workout to finish.")
+                } label: {
+                    Label("STOP", systemImage: "stop.fill").font(.title3.weight(.heavy))
+                }
+                .buttonStyle(SportButtonStyle(kind: .stop, height: 64))
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
         }
     }
 
+    private var isPaused: Bool {
+        if case .paused = runner.phase { return true }
+        return false
+    }
+
+    // MARK: Summary
+
     private func summary(_ reason: String) -> some View {
         VStack(spacing: 18) {
-            Spacer()
-            Image(systemName: reason == "Workout complete" ? "checkmark.circle.fill" : "flag.checkered")
-                .font(.system(size: 64))
-                .foregroundStyle(Theme.volt)
-            Text(reason).font(.title.weight(.bold))
+            Image(systemName: reason == "Workout complete" ? "checkmark.seal.fill" : "flag.checkered")
+                .font(.system(size: 68))
+                .foregroundStyle(Theme.accent)
+                .symbolEffect(.bounce, value: reason)
+                .padding(.top, 24)
+            Text(reason).font(.largeTitle.weight(.heavy))
             HStack(spacing: 12) {
-                tile(clock(treadmill.movingSeconds), "moving time")
-                tile(String(format: "%.2f", treadmill.miles), "miles")
+                MetricTile(value: clock(treadmill.movingSeconds), unit: "moving time", size: 30)
+                MetricTile(value: String(format: "%.2f", treadmill.miles), unit: "miles", size: 30)
             }
             VStack(alignment: .leading, spacing: 8) {
                 Text("How hard was it? (1 = very easy, 10 = all out)").font(.subheadline).foregroundStyle(.secondary)
@@ -145,45 +233,28 @@ struct WorkoutLiveView: View {
                             Text("\(value)")
                                 .font(.subheadline.weight(.bold).monospacedDigit())
                                 .frame(maxWidth: .infinity, minHeight: 40)
-                                .background(effort == value ? Theme.volt : Color.secondary.opacity(0.2),
-                                            in: RoundedRectangle(cornerRadius: 8))
+                                .background(effort == value ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.white.opacity(0.1)),
+                                            in: RoundedRectangle(cornerRadius: 10))
                                 .foregroundStyle(effort == value ? .black : .primary)
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                Text("The coach uses this to adjust your next workout.").font(.caption).foregroundStyle(.tertiary)
+                .sensoryFeedback(.selection, trigger: effort)
+                Text("The coach uses this to adjust your next workout. Incline is back at 0%.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
-            Spacer()
+            .padding(14)
+            .glassCard()
             Button {
                 runner.dismiss()
             } label: {
-                Text("Done").font(.headline).frame(maxWidth: .infinity, minHeight: 56)
+                Text("Done")
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Theme.volt)
-            .foregroundStyle(.black)
+            .buttonStyle(SportButtonStyle(kind: .go))
         }
-    }
-
-    private func tile(_ value: String, _ unit: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.system(size: 28, weight: .bold).monospacedDigit())
-            Text(unit).font(.caption).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 14))
-    }
-
-    private func wideButton(_ title: String, systemImage: String, tint: Color, dark: Bool,
-                            action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage).font(.headline).frame(maxWidth: .infinity, minHeight: 52)
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(tint)
-        .foregroundStyle(dark ? .black : .white)
+        .transition(.scale(scale: 0.9).combined(with: .opacity))
     }
 
     private func clock(_ seconds: TimeInterval) -> String {

@@ -88,6 +88,22 @@ enum TemplateCoach {
 enum SafetyCheck {
     static let maxSpeedJump = 1.5  // mph between consecutive steps
 
+    /// Range and jump limits only, without adding steps or rescaling: for live edits of a running
+    /// workout, where step positions must not move.
+    static func clamped(_ input: [WorkoutStep]) -> [WorkoutStep] {
+        var steps = input.map { step in
+            var s = step
+            s.mph = (min(max(s.mph, TreadmillController.minMph), TreadmillController.maxMph) * 10).rounded() / 10
+            s.incline = (min(max(s.incline, 0), TreadmillController.maxIncline) * 2).rounded() / 2
+            s.seconds = max(30, s.seconds)
+            return s
+        }
+        for i in steps.indices.dropFirst() where steps[i].mph - steps[i - 1].mph > maxSpeedJump {
+            steps[i].mph = steps[i - 1].mph + maxSpeedJump
+        }
+        return steps
+    }
+
     static func repair(_ input: Workout, totalMinutes: Int?) -> Workout {
         var workout = input
         var steps = workout.steps.map { step in

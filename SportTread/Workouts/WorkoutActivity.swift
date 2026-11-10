@@ -73,6 +73,8 @@ final class WorkoutActivity {
         Task { await activity.end(content, dismissalPolicy: content == nil ? .immediate : .after(Date().addingTimeInterval(60))) }
     }
 
+    var isActive: Bool { activity != nil }
+
     /// One-minute demo for Setup, no treadmill needed.
     func startTest() {
         let ends = Date().addingTimeInterval(60)
@@ -83,5 +85,55 @@ final class WorkoutActivity {
             try? await Task.sleep(for: .seconds(60))
             end()
         }
+    }
+}
+
+/// Live Activity for treadmill mode (manual use): speed, incline, moving time, distance.
+/// Same rate limits as the workout one.
+@MainActor
+final class TreadmillActivity {
+    typealias State = TreadmillActivityAttributes.ContentState
+
+    private var activity: Activity<TreadmillActivityAttributes>?
+    private var lastSent: State?
+    private var lastSentAt = Date.distantPast
+
+    var isActive: Bool { activity != nil }
+
+    func start(_ state: State) {
+        guard activity == nil, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        do {
+            activity = try Activity.request(
+                attributes: TreadmillActivityAttributes(),
+                content: ActivityContent(state: state, staleDate: nil),
+                pushType: nil)
+            lastSent = state
+            lastSentAt = Date()
+        } catch {
+            LiveActivityStatus.shared.lastResult = "Treadmill activity refused: \(error.localizedDescription)"
+        }
+    }
+
+    func update(_ state: State) {
+        guard let activity else { return }
+        let now = Date()
+        let elapsed = now.timeIntervalSince(lastSentAt)
+        if let last = lastSent {
+            let structural = last.stopped != state.stopped || last.summary != state.summary
+            let readings = abs(last.mph - state.mph) >= 0.05 || abs(last.incline - state.incline) >= 0.25
+            guard structural || (readings && elapsed >= 3) || elapsed >= 60 else { return }
+        }
+        lastSent = state
+        lastSentAt = now
+        Task { await activity.update(ActivityContent(state: state, staleDate: nil)) }
+    }
+
+    /// Ends it; with a final state it stays on the Lock Screen for a minute.
+    func end(final state: State? = nil) {
+        guard let activity else { return }
+        self.activity = nil
+        lastSent = nil
+        let content = state.map { ActivityContent(state: $0, staleDate: nil) }
+        Task { await activity.end(content, dismissalPolicy: content == nil ? .immediate : .after(Date().addingTimeInterval(60))) }
     }
 }

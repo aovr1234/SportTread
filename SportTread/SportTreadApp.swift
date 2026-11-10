@@ -15,6 +15,7 @@ struct SportTreadApp: App {
         let dataFolder = DataFolder()
         let library = WorkoutLibrary(dataFolder: dataFolder)
         runner.onFinish = { [weak library] entry in library?.record(entry) }
+        treadmill.onSessionEnd = { [weak library] entry in library?.record(entry) }
         _treadmill = StateObject(wrappedValue: treadmill)
         _runner = StateObject(wrappedValue: runner)
         _dataFolder = StateObject(wrappedValue: dataFolder)
@@ -42,7 +43,7 @@ struct SportTreadApp: App {
                     .environmentObject(runner)
                     .environmentObject(library)
                     .preferredColorScheme(.dark)
-                    .tint(Theme.volt)
+                    .tint(Theme.lime)
             }
             .environmentObject(treadmill)
             .environmentObject(runner)
@@ -51,13 +52,9 @@ struct SportTreadApp: App {
             .environmentObject(coach)
             .environmentObject(health)
             .preferredColorScheme(.dark)
-            .tint(Theme.volt)
+            .tint(Theme.lime)
             .task { library.reload() }
             .onChange(of: dataFolder.folderDescription) { library.reload() }  // folder is ready a moment after launch
         }
     }
-}
-
-enum Theme {
-    static let volt = Color(red: 0.776, green: 1.0, blue: 0.0)  // #C6FF00
 }

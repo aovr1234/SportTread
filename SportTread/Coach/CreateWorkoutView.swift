@@ -42,19 +42,22 @@ struct CreateWorkoutView: View {
                     Button {
                         Task { created = await coach.create(request, history: library.history) }
                     } label: {
-                        HStack {
-                            Spacer()
-                            if coach.isWorking { ProgressView().padding(.trailing, 6) }
-                            Text(coach.isWorking ? "Creating…" : "Create workout").font(.headline)
-                            Spacer()
+                        HStack(spacing: 8) {
+                            Image(systemName: "sparkles")
+                                .symbolEffect(.pulse, isActive: coach.isWorking)
+                            Text(coach.isWorking ? "Creating…" : "Create workout")
                         }
-                        .frame(minHeight: 44)
                     }
+                    .buttonStyle(SportButtonStyle(kind: .go))
                     .disabled(coach.isWorking)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
                 } footer: {
                     Text(footer)
                 }
             }
+            .listRowBackground(glassRow)
+            .sportList()
             .navigationTitle("Coach")
             .navigationDestination(item: $created) { workout in
                 WorkoutDetailView(workout: workout, isNew: true)
@@ -74,7 +77,7 @@ struct CreateWorkoutView: View {
             Text(title)
                 .font(.subheadline.weight(.semibold).monospacedDigit())
                 .frame(maxWidth: .infinity, minHeight: 36)
-                .background(selected ? Theme.volt : Color.secondary.opacity(0.2), in: Capsule())
+                .background(selected ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.white.opacity(0.12)), in: Capsule())
                 .foregroundStyle(selected ? .black : .primary)
         }
         .buttonStyle(.plain)

@@ -21,6 +21,12 @@ Status: milestones 0, 1, 2 passed (2026-11-09); milestone 5 (AI coach) passed, L
   - A 3-2-1 countdown before the belt starts.
 - **Live charts:** HR vs target line, speed/incline area chart (Swift Charts), on the live screen and in history.
 - **Lock screen and Dynamic Island:** a Live Activity during workouts (built 2026-11): step, countdown, speed, incline, progress, next step; HR added with the sensor. Runs in a widget extension, which Signulous must sign.
+  - **Treadmill mode** (manual use, no workout; planned, not built): its own Live Activity.
+    - **Shows:** speed, incline, moving time (counting up on its own), distance; HR once the sensor arrives.
+    - **Starts and ends:** starts when the belt starts. A stop shows "Stopped", and it ends after **2 minutes** stopped (or on End workout / Disconnect), with a summary (time, distance) for a minute.
+    - **Dynamic Island:** compact shows a runner icon and the current speed; long-press shows speed, incline, time and distance.
+    - **Workouts:** starting a workout replaces it with the workout Live Activity (only one at a time).
+    - **Updates:** same rate limits as workouts (changes at once, readings every 3 s, a refresh every 60 s).
 - **App icon:** a stylised treadmill belt forming a pulse line, volt green on black.
 
 ## Goal
@@ -67,6 +73,26 @@ Setting: **Off** (default), **Apple Watch (via Health)**, or **Bluetooth monitor
 - A workout is a list of steps: duration plus either a fixed speed/incline or a heart-rate target.
 - Built-in: steady, intervals, hills, heart-rate hold.
 - Controls: pause, skip, extend step; STOP always on screen.
+
+**Live speed and incline controls on the workout screen** (planned, from the 2026-11 field test; not built yet)
+- Two tiles under the progress section: **Speed** and **Incline**, each with ▲, the current value, ▼.
+- **Tap:** speed ±0.1 mph, incline ±0.5%.
+- **Press and hold, then slide up/down:** the value scrolls in the same steps (0.1 mph / 0.5%), with a haptic tick per step. Slow slide = precise; longer or faster slide = faster ticks; holding near the tile's top/bottom edge keeps counting and speeds up the longer you hold.
+- **Send on release:** one command with the shown value; no flood of in-between commands. The value shows in volt green until the treadmill reports it, then white.
+- **Limits:** 0.5–10 mph, 0–10%; scrolling stops at the edges.
+- **Scope of a change:** lasts until the next step (default). After manual changes in two steps in a row, offer "Adjust the rest of the workout by the same amount?".
+
+**End workout, with the incline back to 0%** (planned, from the 2026-11 field test; not built yet)
+- **Treadmill mode** (manual use): an **End workout** button on the Treadmill tab, shown once the belt has run.
+- **Workouts:** finishing or **End workout** on the live screen ends the workout.
+- **What ending does, in order:**
+  1. Stop the belt.
+  2. Lower the incline to 0%.
+  3. Save the session (history now; Apple Health in milestone 4).
+  4. Show the summary (time, distance, effort rating).
+  5. End the Live Activity with the summary.
+- **STOP vs End workout:** STOP is the instant emergency stop. It stops the belt and **leaves the incline where it is**; during a workout it pauses the workout with **Resume** and **End workout**. The incline only goes back to 0% when the workout is ended.
+- To test first: that the console accepts an incline command while the belt is stopped. If it doesn't, End workout sends incline 0% just before the stop instead.
 
 ### 4. Heart-rate hold
 Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR formula, and how commercial gym treadmill HR programs behave. All of them can be changed in settings.
@@ -131,6 +157,11 @@ Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR form
 - Training load per workout (HR-based) and this week vs. the last 4 weeks.
 - Readiness: resting HR, HRV and sleep read from Apple Health.
 - Perceived effort: quick 1–10 rating after each workout.
+- **Deviation notes** (planned, not built): whenever a workout departs from its plan, the app logs it with the step and time. The log is saved with the workout in history and summarized for the AI coach's context, e.g. "lowered speed in 3 of 8 fast intervals by 0.3 mph on average; skipped the cool-down".
+  - Manual speed/incline changes (from/to), on the console or in the app
+  - Skipped steps, pauses (length, reason), ending early
+  - Console Stop/safety key, reconnects
+  - "Adjust the rest" accepted or ignored, AI live edits
 - Stored with the workout logs in the data folder.
 
 **AI coach (Apple Intelligence, on-device)**
@@ -154,6 +185,21 @@ Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR form
 6. **Run and learn:** after the workout, a 1–10 effort rating plus what actually happened (completed, stopped early, manual speed changes on the console) feed the next suggestion.
 - Saved workouts go to `workouts/` in the data folder as plain JSON; hand-made workouts use the same editor.
 
+**Apple Intelligence during the workout** (planned, not built; chosen 2026-11)
+- **A. Live editing on request**
+  - Quick buttons on the live screen: **Easier**, **Harder**, **Shorter**, **Longer**, plus requests like "skip the hills", "my knees hurt", "add 5 minutes at the end", **typed or spoken**.
+  - Speaking: a hold-to-talk mic button; speech is recognised on the device (Apple's Speech framework, on-device mode), shown as text before it's sent, so a misheard request can be corrected. Needs microphone and speech-recognition permission.
+  - Apple Intelligence rewrites only the **remaining steps**; the current step can change only if the request is about now ("easier now").
+  - The result goes through SafetyCheck, then shows a short preview, e.g. "Next 3 steps: −0.3 mph, hills capped at 4%".
+  - Easing off applies right away; anything harder needs one tap to confirm.
+  - Every edit is logged in the deviation notes.
+- **B. Coaching from behaviour**
+  - Watches the deviation notes as they happen. Repeated manual slow-downs, repeated stops at the same point, or skipped steps lead to an offer to adjust the rest ("You've eased off the last 3 intervals. Lower the remaining ones by 0.3 mph?").
+  - Optional check-in every 5–10 minutes: "How's it feeling?" with **Easy / Good / Hard**, which nudges the upcoming steps the same way.
+  - Offers only: nothing changes without a tap, except easing off on an explicit "Hard".
+- **C. Spoken/on-screen coach messages:** skipped for now.
+- Built on the existing pieces: the workout format, SafetyCheck, and the on-device model from milestone 5. If Apple Intelligence is unavailable, the quick buttons fall back to fixed rules (e.g. Easier = −0.3 mph and −1% on the remaining steps).
+
 ### 8. Screens
 - **iPhone:** connect, workout list, workout editor, live workout (HR and target, speed, incline, time, distance, current/next step, STOP), history, settings.
 
@@ -162,6 +208,23 @@ Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR form
 - GitHub Actions macOS runner builds an unsigned `.ipa` on every push.
 - The user signs it with Signulous and installs it.
 - Signulous signs for the iPhone only: HealthKit works, a watch app can't be installed, and the app's signing ID is shared with other sideloaded apps.
+
+## Next build (0.7): everything that doesn't need the heart-rate sensor
+Scope agreed 2026-11 after the first field test. Not started yet.
+
+| Included | Details |
+|---|---|
+| Speed and Incline tiles on the workout screen | §3 "Live speed and incline controls" |
+| End workout (incline to 0%), STOP pauses with Resume / End | §3 "End workout" |
+| Treadmill-mode Live Activity (ends 2 min after stopping) | §8 Screens |
+| Deviation notes for the AI | §7 Performance tracking |
+| AI during workouts: Easier/Harder/Shorter/Longer, typed and spoken requests, behaviour-based offers, check-ins | §7 "Apple Intelligence during the workout" |
+| History screen and workout editor | from milestone 4 |
+| Readiness from Apple Health (reading resting HR, HRV, sleep recorded by the watch/Oura) | §7 Performance tracking |
+| Simple goal plans (e.g. 3 workouts a week for 6 weeks) | §7 AI coach |
+| UI overhaul: Liquid Glass (iOS 26+, frosted panels before), animations, the icon's navy/cyan/lime palette, progress ring, rolling numbers | §8 Design; started in `DesignSystem.swift` (uncommitted) |
+
+**On hold:** saving workouts to Apple Health (milestone 4) and everything heart-rate (milestone 3, waits for the sensor).
 
 ## Milestones
 | # | Milestone | Done when |

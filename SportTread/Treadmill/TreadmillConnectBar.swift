@@ -6,10 +6,12 @@ struct TreadmillConnectBar: View {
     @EnvironmentObject private var treadmill: TreadmillController
 
     var body: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
                 Image(systemName: busy ? "antenna.radiowaves.left.and.right" : "bolt.horizontal.circle")
+                    .font(.title3)
                     .foregroundStyle(.orange)
+                    .symbolEffect(.variableColor.iterative, isActive: busy)
                 Text(statusText).font(.subheadline.weight(.semibold))
                 Spacer()
                 if busy { ProgressView() }
@@ -19,16 +21,13 @@ struct TreadmillConnectBar: View {
                     treadmill.connect()
                 } label: {
                     Label("Connect treadmill", systemImage: "dot.radiowaves.left.and.right")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 52)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.volt)
-                .foregroundStyle(.black)
+                .buttonStyle(SportButtonStyle(kind: .go, height: 52))
             }
         }
-        .padding(12)
-        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+        .padding(14)
+        .glassCard(tint: .orange)
+        .animation(.easeInOut, value: busy)
     }
 
     private var busy: Bool {

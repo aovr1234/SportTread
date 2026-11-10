@@ -98,6 +98,8 @@ struct ContentView: View {
                     Text("Values as installed, after Signulous signing.")
                 }
             }
+            .listRowBackground(glassRow)
+            .sportList()
             .navigationTitle("Setup")
             .confirmationDialog("Delete all test workouts saved by this app?", isPresented: $confirmingDelete,
                                 titleVisibility: .visible) {

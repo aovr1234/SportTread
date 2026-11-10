@@ -18,13 +18,16 @@ struct WorkoutsView: View {
                             offsets.map { library.saved[$0] }.forEach(library.delete)
                         }
                     }
+                    .listRowBackground(glassRow)
                 }
                 Section("Built-in") {
                     ForEach(Workout.builtIn) { workout in
                         NavigationLink(value: workout) { WorkoutRow(workout: workout) }
                     }
                 }
+                .listRowBackground(glassRow)
             }
+            .sportList()
             .navigationTitle("Workouts")
             .navigationDestination(for: Workout.self) { WorkoutDetailView(workout: $0) }
             .onAppear { library.reload() }
@@ -87,6 +90,7 @@ struct WorkoutDetailView: View {
                 }
             }
         }
+        .sportList()
         .navigationTitle(workout.name)
         .toolbar {
             if isNew {
@@ -108,12 +112,8 @@ struct WorkoutDetailView: View {
                         runner.start(workout)
                     } label: {
                         Label("Start workout", systemImage: "play.fill")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, minHeight: 56)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Theme.volt)
-                    .foregroundStyle(.black)
+                    .buttonStyle(SportButtonStyle(kind: .go))
                     .disabled(runner.isActive)
                 } else {
                     TreadmillConnectBar()
@@ -123,7 +123,6 @@ struct WorkoutDetailView: View {
                 }
             }
             .padding()
-            .background(.bar)
         }
     }
 
@@ -178,9 +177,9 @@ struct WorkoutProfile: View {
 
     private func color(for segment: Segment) -> Color {
         if let highlight {
-            return segment.id == highlight ? Theme.volt : Color.gray.opacity(0.35)
+            return segment.id == highlight ? Theme.lime : Color.white.opacity(0.18)
         }
-        return Theme.volt.opacity(0.35 + 0.065 * segment.incline)
+        return Theme.lime.opacity(0.35 + 0.065 * segment.incline)
     }
 }
 

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Milestone 1: live treadmill control.
+/// Treadmill mode: live readout and manual control, with End workout and a session summary.
 struct TreadmillView: View {
     @EnvironmentObject private var treadmill: TreadmillController
 
@@ -8,21 +8,37 @@ struct TreadmillView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 14) {
-                    statusBar
+                    statusPill
 
                     HStack(spacing: 12) {
-                        bigTile(treadmill.speedMph.map { String(format: "%.1f", $0) } ?? "–", unit: "mph")
-                        bigTile(treadmill.incline.map { String(format: "%.1f", $0) } ?? "–", unit: "% incline")
+                        MetricTile(value: treadmill.speedMph.map { String(format: "%.1f", $0) } ?? "–",
+                                   unit: "mph", highlighted: treadmill.isRunning)
+                        MetricTile(value: treadmill.incline.map { String(format: "%.1f", $0) } ?? "–",
+                                   unit: "% incline")
                     }
                     HStack(spacing: 12) {
-                        smallTile(timeText, unit: "moving time")
-                        smallTile(String(format: "%.2f", treadmill.miles), unit: "miles")
+                        MetricTile(value: timeText, unit: "moving time", size: 30)
+                        MetricTile(value: String(format: "%.2f", treadmill.miles), unit: "miles", size: 30)
+                    }
+
+                    if let summary = treadmill.lastSessionSummary, !treadmill.sessionActive {
+                        Label("Session saved: \(summary)", systemImage: "checkmark.seal.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.lime)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                            .glassCard(tint: Theme.lime)
+                            .transition(.move(edge: .top).combined(with: .opacity))
                     }
 
                     if treadmill.isReady {
                         controls
                     } else {
-                        connectCard
+                        TreadmillConnectBar()
+                        Text("Turn the treadmill on and close any other app connected to it (like iFit).")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
                     if !treadmill.lastEvent.isEmpty {
@@ -30,6 +46,8 @@ struct TreadmillView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .id(treadmill.lastEvent)
+                            .transition(.opacity)
                     }
                     Text("The console Stop button and the safety key always work.")
                         .font(.footnote)
@@ -37,19 +55,20 @@ struct TreadmillView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding()
+                .animation(.spring(response: 0.4, dampingFraction: 0.85), value: treadmill.isRunning)
+                .animation(.spring(response: 0.4, dampingFraction: 0.85), value: treadmill.sessionActive)
+                .animation(.easeInOut, value: treadmill.lastEvent)
             }
+            .background(AppBackground())
             .navigationTitle("Andrew's SportTread")
             .safeAreaInset(edge: .bottom) {
                 if treadmill.isReady {
                     Button(role: .destructive) {
                         treadmill.stop()
                     } label: {
-                        Text("STOP")
-                            .font(.title2.weight(.heavy))
-                            .frame(maxWidth: .infinity, minHeight: 64)
+                        Label("STOP", systemImage: "stop.fill").font(.title3.weight(.heavy))
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
+                    .buttonStyle(SportButtonStyle(kind: .stop, height: 64))
                     .padding(.horizontal)
                     .padding(.bottom, 8)
                 }
@@ -69,15 +88,25 @@ struct TreadmillView: View {
 
     // MARK: Pieces
 
-    private var statusBar: some View {
-        HStack {
-            Circle().fill(statusColor).frame(width: 10, height: 10)
-            Text(statusText).font(.subheadline)
+    private var statusPill: some View {
+        HStack(spacing: 10) {
+            StatusDot(color: statusColor, pulsing: treadmill.isRunning || busy)
+                .id("\(statusColor)-\(treadmill.isRunning || busy)")
+            Text(statusText).font(.subheadline.weight(.semibold))
             Spacer()
             if treadmill.isReady {
-                Button("Disconnect") { treadmill.disconnect() }.font(.subheadline)
+                Button("Disconnect") { treadmill.disconnect() }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .glassCard(cornerRadius: 30)
+    }
+
+    private var busy: Bool {
+        [.scanning, .connecting, .handshaking, .reconnecting].contains(treadmill.state)
     }
 
     private var statusText: String {
@@ -95,31 +124,10 @@ struct TreadmillView: View {
 
     private var statusColor: Color {
         switch treadmill.state {
-        case .ready: Theme.volt
+        case .ready: Theme.lime
         case .scanning, .connecting, .handshaking, .reconnecting: .orange
         default: .gray
         }
-    }
-
-    private var connectCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Turn the treadmill on and close any other app connected to it (like iFit).")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Button {
-                treadmill.connect()
-            } label: {
-                Text("Connect")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity, minHeight: 52)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Theme.volt)
-            .foregroundStyle(.black)
-            .disabled([.scanning, .connecting, .handshaking, .reconnecting].contains(treadmill.state))
-        }
-        .padding()
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
     }
 
     private var controls: some View {
@@ -129,68 +137,40 @@ struct TreadmillView: View {
                     treadmill.start()
                 } label: {
                     Label("Start at 1.0 mph", systemImage: "play.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 60)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.volt)
-                .foregroundStyle(.black)
+                .buttonStyle(SportButtonStyle(kind: .go, height: 60))
+                .transition(.scale.combined(with: .opacity))
             }
 
-            controlRow(title: "Speed", steps: [-0.5, -0.1, 0.1, 0.5], format: "%+.1f") {
-                treadmill.changeSpeed(by: $0)
+            HStack(spacing: 12) {
+                AdjustTile(title: "Speed", unit: "mph", value: treadmill.speedMph, step: 0.1,
+                           range: TreadmillController.minMph...TreadmillController.maxMph, decimals: 1,
+                           enabled: treadmill.isRunning) { treadmill.setSpeed($0) }
+                AdjustTile(title: "Incline", unit: "%", value: treadmill.incline, step: 0.5,
+                           range: 0...TreadmillController.maxIncline, decimals: 1) { treadmill.setIncline($0) }
             }
-            .disabled(!treadmill.isRunning)
 
             HStack(spacing: 8) {
                 ForEach([2.0, 3.0, 4.0, 5.0], id: \.self) { mph in
                     Button(String(format: "%.0f mph", mph)) { treadmill.setSpeed(mph) }
-                        .buttonStyle(.bordered)
-                        .frame(maxWidth: .infinity)
+                        .buttonStyle(SportButtonStyle(kind: .neutral, height: 40))
+                        .font(.subheadline)
                 }
             }
             .disabled(!treadmill.isRunning)
 
-            controlRow(title: "Incline", steps: [-1, -0.5, 0.5, 1], format: "%+.1f") {
-                treadmill.changeIncline(by: $0)
-            }
-        }
-    }
-
-    private func controlRow(title: String, steps: [Double], format: String,
-                            action: @escaping (Double) -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                ForEach(steps, id: \.self) { step in
-                    Button(String(format: format, step)) { action(step) }
-                        .font(.headline.monospacedDigit())
-                        .frame(maxWidth: .infinity, minHeight: 48)
-                        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
+            if treadmill.sessionActive {
+                Button {
+                    treadmill.endWorkout()
+                } label: {
+                    Label("End workout", systemImage: "flag.checkered")
                 }
+                .buttonStyle(SportButtonStyle(kind: .neutral, height: 52))
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                Text("Ends the session: incline back to 0%, belt stops, session saved.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
-    }
-
-    private func bigTile(_ value: String, unit: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value)
-                .font(.system(size: 56, weight: .heavy).monospacedDigit())
-                .contentTransition(.numericText())
-            Text(unit).font(.caption).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func smallTile(_ value: String, unit: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.system(size: 28, weight: .bold).monospacedDigit())
-            Text(unit).font(.caption).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 14))
     }
 }

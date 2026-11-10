@@ -22,3 +22,19 @@ struct WorkoutActivityAttributes: ActivityAttributes {
     var workoutName: String
     var totalSeconds: Int
 }
+
+/// Live Activity for treadmill mode (manual use, no workout).
+struct TreadmillActivityAttributes: ActivityAttributes {
+    struct ContentState: Codable, Hashable {
+        var mph: Double
+        var incline: Double
+        var miles: Double
+        /// While running, moving time counts up from here on its own
+        var runningSince: Date
+        /// Moving time shown frozen while stopped
+        var movingSeconds: Int
+        var stopped: Bool
+        /// Set when the session is over, e.g. "Session ended"
+        var summary: String?
+    }
+}

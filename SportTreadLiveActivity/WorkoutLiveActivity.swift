@@ -6,6 +6,87 @@ import WidgetKit
 struct SportTreadWidgets: WidgetBundle {
     var body: some Widget {
         WorkoutLiveActivity()
+        TreadmillLiveActivity()
+    }
+}
+
+/// Treadmill mode (no workout): speed, incline, moving time, distance.
+struct TreadmillLiveActivity: Widget {
+    var body: some WidgetConfiguration {
+        ActivityConfiguration(for: TreadmillActivityAttributes.self) { context in
+            TreadmillLockScreen(state: context.state)
+                .activityBackgroundTint(Color.black.opacity(0.85))
+                .activitySystemActionForegroundColor(volt)
+        } dynamicIsland: { context in
+            let state = context.state
+            return DynamicIsland {
+                DynamicIslandExpandedRegion(.leading) {
+                    Metric(value: String(format: "%.1f", state.mph), unit: "mph")
+                }
+                DynamicIslandExpandedRegion(.trailing) {
+                    Metric(value: String(format: "%.1f%%", state.incline), unit: "incline", alignment: .trailing)
+                }
+                DynamicIslandExpandedRegion(.center) {
+                    Text(state.summary ?? (state.stopped ? "Stopped" : "Treadmill")).font(.headline).lineLimit(1)
+                }
+                DynamicIslandExpandedRegion(.bottom) {
+                    HStack {
+                        MovingTime(state: state).font(.title3.weight(.heavy).monospacedDigit())
+                        Spacer()
+                        Text(String(format: "%.2f mi", state.miles)).font(.title3.weight(.bold).monospacedDigit())
+                    }
+                }
+            } compactLeading: {
+                Image(systemName: state.stopped ? "pause.fill" : "figure.run").foregroundStyle(volt)
+            } compactTrailing: {
+                Text(String(format: "%.1f", state.mph))
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(volt)
+            } minimal: {
+                Image(systemName: state.stopped ? "pause.fill" : "figure.run").foregroundStyle(volt)
+            }
+            .keylineTint(volt)
+        }
+    }
+}
+
+private struct TreadmillLockScreen: View {
+    let state: TreadmillActivityAttributes.ContentState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "figure.run").foregroundStyle(volt)
+                Text("Treadmill").font(.headline)
+                Spacer()
+                Text(state.summary ?? (state.stopped ? "Stopped" : "Running"))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(state.stopped || state.summary != nil ? .orange : volt)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 18) {
+                Metric(value: String(format: "%.1f", state.mph), unit: "mph")
+                Metric(value: String(format: "%.1f%%", state.incline), unit: "incline")
+                VStack(alignment: .leading, spacing: 0) {
+                    MovingTime(state: state).font(.title3.weight(.bold).monospacedDigit())
+                    Text("time").font(.caption2).foregroundStyle(.secondary)
+                }
+                Metric(value: String(format: "%.2f", state.miles), unit: "miles")
+            }
+        }
+        .padding()
+    }
+}
+
+/// Moving time: counts up on its own while running; frozen while stopped.
+private struct MovingTime: View {
+    let state: TreadmillActivityAttributes.ContentState
+
+    var body: some View {
+        if state.stopped || state.summary != nil {
+            Text(String(format: "%d:%02d", state.movingSeconds / 60, state.movingSeconds % 60))
+        } else {
+            Text(timerInterval: state.runningSince...Date.distantFuture, countsDown: false)
+        }
     }
 }
 

@@ -34,6 +34,23 @@ final class TreadmillController: NSObject, ObservableObject {
     var isReady: Bool { state == .ready }
     var isRunning: Bool { (speedMph ?? 0) > 0 }
 
+    /// A manual (treadmill-mode) session is open: the belt has run since the last End workout.
+    @Published private(set) var sessionActive = false
+    /// Summary of the last ended treadmill-mode session, shown on the Treadmill tab
+    @Published private(set) var lastSessionSummary: String?
+
+    /// Set by the workout runner while a workout runs; treadmill-mode tracking pauses meanwhile.
+    var workoutActive = false {
+        didSet {
+            guard workoutActive, sessionActive else { return }
+            manualActivity.end()
+            sessionActive = false
+        }
+    }
+
+    /// Called when a treadmill-mode session ends, for history.
+    var onSessionEnd: ((HistoryEntry) -> Void)?
+
     private struct Job {
         let label: String
         let frames: [Data]
@@ -56,6 +73,11 @@ final class TreadmillController: NSObject, ObservableObject {
     private var targetMph: (value: Double, at: Date)?
     private var targetIncline: (value: Double, at: Date)?
     private var readySince: Date?
+    private let manualActivity = TreadmillActivity()
+    private var stoppedSince: Date?
+    private var sessionMaxMph = 0.0
+    private var sessionMaxIncline = 0.0
+    private static let activityStopLimit: TimeInterval = 120  // treadmill-mode Live Activity ends 2 min after stopping
 
     private static let restoreID = "SportTreadTreadmill"
     /// Set while connected, so a background relaunch by iOS restores the connection.
@@ -108,6 +130,7 @@ final class TreadmillController: NSObject, ObservableObject {
     /// Ends the connection for good (Disconnect or a fatal error); no automatic reconnect.
     private func teardown(reason: String) {
         UserDefaults.standard.set(false, forKey: Self.wasConnectedKey)
+        if sessionActive { closeManualSession(summary: "Disconnected") }
         resetSession()
         let old = peripheral
         peripheral = nil  // marks the coming disconnect callback as intentional
@@ -147,6 +170,25 @@ final class TreadmillController: NSObject, ObservableObject {
         targetMph = (1.0, Date())
         enqueue("Start", TreadmillProtocol.startFrames)
         enqueue("Speed 1.0 mph", TreadmillProtocol.speedFrames(mph: 1.0), after: 1.5)
+    }
+
+    /// Treadmill mode: lowers the incline to 0%, stops the belt, saves the session and shows a summary.
+    /// (Incline goes first: it's sent while the belt still runs, so it doesn't depend on the console
+    /// accepting incline changes once stopped.)
+    func endWorkout() {
+        zeroInclineAndStop()
+        if sessionActive { closeManualSession(summary: "Session ended") }
+    }
+
+    /// Lowers the incline to 0% and stops the belt (incline first, while the belt still runs).
+    /// Used whenever a workout or session ends; STOP alone leaves the incline as it is.
+    func zeroInclineAndStop() {
+        guard isReady else { return }
+        queue.removeAll()
+        targetMph = nil
+        targetIncline = (0, Date())
+        enqueue("Incline 0%", TreadmillProtocol.inclineFrames(percent: 0))
+        enqueue("Stop", TreadmillProtocol.stopFrames)
     }
 
     /// Stops the belt; drops anything still queued.
@@ -201,6 +243,58 @@ final class TreadmillController: NSObject, ObservableObject {
     func resetStats() {
         movingSeconds = 0
         miles = 0
+        sessionMaxMph = 0
+        sessionMaxIncline = 0
+    }
+
+    // MARK: Treadmill-mode session
+
+    private func manualState(now: Date, stopped: Bool, summary: String? = nil) -> TreadmillActivity.State {
+        TreadmillActivity.State(
+            mph: speedMph ?? 0, incline: incline ?? 0, miles: miles,
+            runningSince: now.addingTimeInterval(-movingSeconds),
+            movingSeconds: Int(movingSeconds), stopped: stopped, summary: summary)
+    }
+
+    private func updateManualSession(now: Date) {
+        guard !workoutActive else { return }
+        if isRunning {
+            stoppedSince = nil
+            if !sessionActive {
+                sessionActive = true
+                lastSessionSummary = nil
+                resetStats()
+            }
+            sessionMaxMph = max(sessionMaxMph, speedMph ?? 0)
+            sessionMaxIncline = max(sessionMaxIncline, incline ?? 0)
+            if manualActivity.isActive {
+                manualActivity.update(manualState(now: now, stopped: false))
+            } else {
+                manualActivity.start(manualState(now: now, stopped: false))
+            }
+        } else if sessionActive, manualActivity.isActive {
+            let since = stoppedSince ?? now
+            stoppedSince = since
+            if now.timeIntervalSince(since) >= Self.activityStopLimit {
+                manualActivity.end(final: manualState(now: now, stopped: true, summary: "Stopped"))
+            } else {
+                manualActivity.update(manualState(now: now, stopped: true))
+            }
+        }
+    }
+
+    private func closeManualSession(summary: String) {
+        let now = Date()
+        manualActivity.end(final: manualState(now: now, stopped: true, summary: summary))
+        sessionActive = false
+        stoppedSince = nil
+        let s = Int(movingSeconds)
+        lastSessionSummary = String(format: "%d:%02d · %.2f mi · top %.1f mph", s / 60, s % 60, miles, sessionMaxMph)
+        if movingSeconds >= 30 {
+            onSessionEnd?(HistoryEntry(
+                date: now, name: "Treadmill session", plannedSeconds: 0, seconds: s, miles: miles,
+                maxMph: sessionMaxMph, maxIncline: sessionMaxIncline, completed: true))
+        }
     }
 
     // MARK: Session loop
@@ -293,6 +387,7 @@ final class TreadmillController: NSObject, ObservableObject {
         lastStatusAt = now
         speedMph = mph
         incline = status.incline
+        updateManualSession(now: now)
     }
 }
 
