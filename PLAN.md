@@ -210,7 +210,7 @@ Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR form
 - Signulous signs for the iPhone only: HealthKit works, a watch app can't be installed, and the app's signing ID is shared with other sideloaded apps.
 
 ## Next build (0.7): everything that doesn't need the heart-rate sensor
-Scope agreed 2026-11 after the first field test. Not started yet.
+Scope agreed 2026-11 after the first field test. **Built 2026-11-10** (plus deleting workout history: swipe one, or Delete all), testing.
 
 | Included | Details |
 |---|---|
@@ -222,7 +222,8 @@ Scope agreed 2026-11 after the first field test. Not started yet.
 | History screen and workout editor | from milestone 4 |
 | Readiness from Apple Health (reading resting HR, HRV, sleep recorded by the watch/Oura) | §7 Performance tracking |
 | Simple goal plans (e.g. 3 workouts a week for 6 weeks) | §7 AI coach |
-| UI overhaul: Liquid Glass (iOS 26+, frosted panels before), animations, the icon's navy/cyan/lime palette, progress ring, rolling numbers | §8 Design; started in `DesignSystem.swift` (uncommitted) |
+| UI overhaul: Liquid Glass (iOS 26+, frosted panels before), animations, the icon's navy/cyan/lime palette, progress ring, rolling numbers | §8 Design; `DesignSystem.swift` |
+| Delete workout history (swipe one entry, or Delete all with confirmation) | History tab |
 
 **On hold:** saving workouts to Apple Health (milestone 4) and everything heart-rate (milestone 3, waits for the sensor).
 
