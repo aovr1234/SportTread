@@ -4,6 +4,7 @@ import SwiftUI
 struct CreateWorkoutView: View {
     @EnvironmentObject private var coach: Coach
     @EnvironmentObject private var library: WorkoutLibrary
+    @EnvironmentObject private var readiness: Readiness
     @State private var request = WorkoutRequest()
     @AppStorage(WorkoutRunner.checkInKey) private var checkInMinutes = 0
     @State private var created: Workout?
@@ -13,6 +14,9 @@ struct CreateWorkoutView: View {
     var body: some View {
         NavigationStack {
             Form {
+                ReadinessSection()
+                PlanSection(created: $created)
+
                 Section("How long?") {
                     HStack(spacing: 8) {
                         ForEach(quickMinutes, id: \.self) { minutes in
@@ -51,7 +55,10 @@ struct CreateWorkoutView: View {
 
                 Section {
                     Button {
-                        Task { created = await coach.create(request, history: library.history) }
+                        Task {
+                            created = await coach.create(request, history: library.history,
+                                                         readiness: readiness.level, readinessNote: readiness.coachSummary)
+                        }
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "sparkles")

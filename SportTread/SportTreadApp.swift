@@ -8,6 +8,7 @@ struct SportTreadApp: App {
     @StateObject private var library: WorkoutLibrary
     @StateObject private var coach = Coach()
     @StateObject private var liveCoach = LiveCoach()
+    @StateObject private var readiness = Readiness()
     @StateObject private var health = HealthTest()
 
     init() {
@@ -32,6 +33,8 @@ struct SportTreadApp: App {
                     .tabItem { Label("Coach", systemImage: "sparkles") }
                 WorkoutsView()
                     .tabItem { Label("Workouts", systemImage: "list.bullet.rectangle") }
+                HistoryView()
+                    .tabItem { Label("History", systemImage: "chart.bar.xaxis") }
                 ContentView()
                     .tabItem { Label("Setup", systemImage: "gearshape") }
             }
@@ -52,6 +55,7 @@ struct SportTreadApp: App {
             .environmentObject(dataFolder)
             .environmentObject(library)
             .environmentObject(coach)
+            .environmentObject(readiness)
             .environmentObject(health)
             .preferredColorScheme(.dark)
             .tint(Theme.lime)

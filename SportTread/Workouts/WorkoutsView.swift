@@ -5,6 +5,7 @@ import SwiftUI
 struct WorkoutsView: View {
     @EnvironmentObject private var library: WorkoutLibrary
     @EnvironmentObject private var dataFolder: DataFolder
+    @State private var creating = false
 
     var body: some View {
         NavigationStack {
@@ -30,6 +31,16 @@ struct WorkoutsView: View {
             .sportList()
             .navigationTitle("Workouts")
             .navigationDestination(for: Workout.self) { WorkoutDetailView(workout: $0) }
+            .toolbar {
+                Button {
+                    creating = true
+                } label: {
+                    Label("New workout", systemImage: "plus")
+                }
+            }
+            .sheet(isPresented: $creating) {
+                WorkoutEditorView(workout: WorkoutEditorView.blank, original: nil)
+            }
             .onAppear { library.reload() }
             .onChange(of: dataFolder.folderDescription) { library.reload() }
         }
@@ -61,13 +72,15 @@ struct WorkoutDetailView: View {
     @EnvironmentObject private var runner: WorkoutRunner
     @EnvironmentObject private var coach: Coach
     @EnvironmentObject private var library: WorkoutLibrary
+    @Environment(\.dismiss) private var dismiss
     @State private var saveMessage: String?
+    @State private var editing = false
 
     var body: some View {
         List {
             Section {
                 if isNew && !coach.note.isEmpty {
-                    Label(coach.note, systemImage: "sparkles").font(.footnote).foregroundStyle(Theme.volt)
+                    Label(coach.note, systemImage: "sparkles").font(.footnote).foregroundStyle(Theme.lime)
                 }
                 Text(workout.summary).foregroundStyle(.secondary)
                 HStack {
@@ -93,6 +106,13 @@ struct WorkoutDetailView: View {
         .sportList()
         .navigationTitle(workout.name)
         .toolbar {
+            ToolbarItem(placement: .secondaryAction) {
+                Button {
+                    editing = true
+                } label: {
+                    Label(library.isSaved(workout) ? "Edit" : "Edit a copy", systemImage: "pencil")
+                }
+            }
             if isNew {
                 Button(saveMessage == nil ? "Save" : "Saved") {
                     do {
@@ -103,6 +123,13 @@ struct WorkoutDetailView: View {
                     }
                 }
                 .disabled(saveMessage != nil)
+            }
+        }
+        .sheet(isPresented: $editing) {
+            if library.isSaved(workout) {
+                WorkoutEditorView(workout: workout, original: workout) { dismiss() }
+            } else {
+                WorkoutEditorView(workout: copy(of: workout), original: nil)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -124,6 +151,13 @@ struct WorkoutDetailView: View {
             }
             .padding()
         }
+    }
+
+    private func copy(of workout: Workout) -> Workout {
+        var copy = workout
+        copy.id = UUID()
+        copy.name = workout.name + " (my version)"
+        return copy
     }
 
     private func stat(_ value: String, _ label: String) -> some View {

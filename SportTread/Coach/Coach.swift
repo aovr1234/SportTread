@@ -10,13 +10,22 @@ final class Coach: ObservableObject {
     @Published private(set) var isWorking = false
     @Published private(set) var note = ""
 
-    func create(_ request: WorkoutRequest, history: [HistoryEntry]) async -> Workout {
+    func create(_ request: WorkoutRequest, history: [HistoryEntry],
+                readiness: Readiness.Level? = nil, readinessNote: String? = nil) async -> Workout {
         isWorking = true
         defer { isWorking = false }
 
         var resolved = request
         if resolved.kind == .recommend {
             resolved.kind = TemplateCoach.recommendedKind(history: history)
+        }
+        // Low readiness: keep it easy whatever was asked
+        if readiness == .easy, resolved.intensity != .easy {
+            resolved.intensity = .easy
+            resolved.notes += (resolved.notes.isEmpty ? "" : " ") + "Kept easy because readiness is low today."
+        }
+        if let readinessNote {
+            resolved.notes += (resolved.notes.isEmpty ? "" : " ") + readinessNote + "."
         }
 
         #if canImport(FoundationModels)

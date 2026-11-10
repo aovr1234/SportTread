@@ -17,7 +17,7 @@ final class HealthTest: ObservableObject {
             return
         }
         let share: Set<HKSampleType> = [HKObjectType.workoutType(), HKQuantityType(.distanceWalkingRunning)]
-        let read: Set<HKObjectType> = [HKObjectType.workoutType(), HKQuantityType(.heartRate)]
+        let read: Set<HKObjectType> = Readiness.readTypes.union([HKObjectType.workoutType(), HKQuantityType(.heartRate)])
         do {
             try await store.requestAuthorization(toShare: share, read: read)
             let write = store.authorizationStatus(for: HKObjectType.workoutType())

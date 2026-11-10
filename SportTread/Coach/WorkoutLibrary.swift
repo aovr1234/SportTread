@@ -1,10 +1,12 @@
 import Foundation
 
-/// Saved workouts (workouts/*.json) and workout history (history.json) in the app's data folder.
+/// Saved workouts (workouts/*.json), workout history (history.json) and the training plan
+/// (plan.json) in the app's data folder.
 @MainActor
 final class WorkoutLibrary: ObservableObject {
     @Published private(set) var saved: [Workout] = []
     @Published private(set) var history: [HistoryEntry] = []
+    @Published private(set) var plan: TrainingPlan?
 
     private let dataFolder: DataFolder
     private var files: [UUID: URL] = [:]   // saved workout → its file (ids aren't stored in the JSON)
@@ -15,6 +17,7 @@ final class WorkoutLibrary: ObservableObject {
 
     private var workoutsDir: URL? { dataFolder.folder?.appendingPathComponent("workouts", isDirectory: true) }
     private var historyFile: URL? { dataFolder.folder?.appendingPathComponent("history.json") }
+    private var planFile: URL? { dataFolder.folder?.appendingPathComponent("plan.json") }
 
     func reload() {
         if let dir = workoutsDir {
@@ -32,6 +35,47 @@ final class WorkoutLibrary: ObservableObject {
         if let file = historyFile, let data = try? Data(contentsOf: file),
            let entries = try? JSONDecoder.iso.decode([HistoryEntry].self, from: data) {
             history = entries
+        }
+        if let file = planFile, let data = try? Data(contentsOf: file) {
+            plan = try? JSONDecoder.iso.decode(TrainingPlan.self, from: data)
+        } else {
+            plan = nil
+        }
+    }
+
+    /// Overwrites a saved workout's file with an edited version.
+    func update(_ original: Workout, with edited: Workout) throws {
+        guard let url = files[original.id] else {
+            try save(edited)
+            return
+        }
+        try JSONEncoder.iso.encode(edited).write(to: url, options: .atomic)
+        reload()
+    }
+
+    func isSaved(_ workout: Workout) -> Bool { files[workout.id] != nil }
+
+    // MARK: History
+
+    func deleteHistory(_ entry: HistoryEntry) {
+        history.removeAll { $0.id == entry.id }
+        writeHistory()
+    }
+
+    func deleteAllHistory() {
+        history.removeAll()
+        writeHistory()
+    }
+
+    // MARK: Plan
+
+    func setPlan(_ newPlan: TrainingPlan?) {
+        plan = newPlan
+        guard let file = planFile else { return }
+        if let newPlan, let data = try? JSONEncoder.iso.encode(newPlan) {
+            try? data.write(to: file, options: .atomic)
+        } else {
+            try? FileManager.default.removeItem(at: file)
         }
     }
 
