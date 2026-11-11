@@ -20,9 +20,9 @@ final class TreadmillController: NSObject, ObservableObject {
         case disconnected
     }
 
-    static let minMph = 0.5
-    static let maxMph = 10.0
-    static let maxIncline = 10.0
+    static let minMph = TreadmillLimits.minMph
+    static let maxMph = TreadmillLimits.maxMph
+    static let maxIncline = TreadmillLimits.maxIncline
 
     @Published private(set) var state: State = .idle
     @Published private(set) var speedMph: Double?
@@ -172,23 +172,23 @@ final class TreadmillController: NSObject, ObservableObject {
         enqueue("Speed 1.0 mph", TreadmillProtocol.speedFrames(mph: 1.0), after: 1.5)
     }
 
-    /// Treadmill mode: lowers the incline to 0%, stops the belt, saves the session and shows a summary.
-    /// (Incline goes first: it's sent while the belt still runs, so it doesn't depend on the console
-    /// accepting incline changes once stopped.)
+    /// Treadmill mode: stops the belt, then lowers the incline to 0% two seconds later, saves the
+    /// session and shows a summary.
     func endWorkout() {
         zeroInclineAndStop()
         if sessionActive { closeManualSession(summary: "Session ended") }
     }
 
-    /// Lowers the incline to 0% and stops the belt (incline first, while the belt still runs).
-    /// Used whenever a workout or session ends; STOP alone leaves the incline as it is.
+    /// Stops the belt, waits 2 seconds, then sends incline 0%. Used whenever a workout or session
+    /// ends; STOP alone leaves the incline as it is. (Tested on the treadmill: the incline motor lowers the
+    /// deck after the belt has stopped, but not if Stop arrives right after the incline command.)
     func zeroInclineAndStop() {
         guard isReady else { return }
         queue.removeAll()
         targetMph = nil
-        targetIncline = (0, Date())
-        enqueue("Incline 0%", TreadmillProtocol.inclineFrames(percent: 0))
+        targetIncline = (0, Date().addingTimeInterval(2))
         enqueue("Stop", TreadmillProtocol.stopFrames)
+        enqueue("Incline 0%", TreadmillProtocol.inclineFrames(percent: 0), after: 2)
     }
 
     /// Stops the belt; drops anything still queued.

@@ -40,11 +40,11 @@ struct Workout: Codable, Hashable, Identifiable {
         for (i, step) in steps.enumerated() {
             let name = "Step \(i + 1) (\(step.label))"
             if step.seconds <= 0 { found.append("\(name) has no duration") }
-            if !(TreadmillController.minMph...TreadmillController.maxMph).contains(step.mph) {
-                found.append("\(name): speed must be \(TreadmillController.minMph)–\(TreadmillController.maxMph) mph")
+            if !(TreadmillLimits.minMph...TreadmillLimits.maxMph).contains(step.mph) {
+                found.append("\(name): speed must be \(TreadmillLimits.minMph)–\(TreadmillLimits.maxMph) mph")
             }
-            if !(0...TreadmillController.maxIncline).contains(step.incline) {
-                found.append("\(name): incline must be 0–\(Int(TreadmillController.maxIncline))%")
+            if !(0...TreadmillLimits.maxIncline).contains(step.incline) {
+                found.append("\(name): incline must be 0–\(Int(TreadmillLimits.maxIncline))%")
             }
         }
         return found

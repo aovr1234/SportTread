@@ -39,6 +39,30 @@ final class WorkoutRunner: ObservableObject {
     /// A check-in ("How's it feeling?") is waiting for an answer
     @Published private(set) var checkInDue = false
 
+    /// Shown after every live edit: the new length, with Undo for 10 seconds
+    struct EditNotice: Identifiable, Equatable {
+        let id = UUID()
+        let text: String
+    }
+
+    @Published private(set) var editNotice: EditNotice?
+    private var undoSnapshot: Workout?
+    private var undoChangedCurrent = false
+    /// Length when the workout started (History keeps it next to the final length)
+    private(set) var originalSeconds = 0
+    private var peakMph = 0.0
+    private var peakIncline = 0.0
+
+    private struct ChangeOrigin {
+        var index: Int
+        var from: Double
+        var at: TimeInterval
+        var source: String
+        var step: Int
+    }
+
+    private var lastChange: [Deviation.Kind: ChangeOrigin] = [:]
+
     /// Minutes between check-ins; 0 = off. Set on the Coach tab.
     static let checkInKey = "checkInMinutes"
     private var lastCheckInAt: TimeInterval = 0
@@ -101,6 +125,17 @@ final class WorkoutRunner: ObservableObject {
         return Array(workout.steps[(stepIndex + 1)...])
     }
 
+    /// Planned seconds up to and including the current step.
+    var plannedThroughCurrent: Int {
+        guard let workout else { return 0 }
+        return workout.steps.prefix(stepIndex + 1).reduce(0) { $0 + $1.seconds }
+    }
+
+    /// Planned seconds of the steps after the current one.
+    var laterSeconds: Int { remainingSteps.reduce(0) { $0 + $1.seconds } }
+
+    static func clock(_ seconds: Int) -> String { String(format: "%d:%02d", seconds / 60, seconds % 60) }
+
     // MARK: Controls
 
     func start(_ workout: Workout) {
@@ -111,6 +146,12 @@ final class WorkoutRunner: ObservableObject {
         totalElapsed = 0
         deviations = []
         offer = nil
+        editNotice = nil
+        undoSnapshot = nil
+        lastChange = [:]
+        peakMph = 0
+        peakIncline = 0
+        originalSeconds = workout.totalSeconds
         checkInDue = false
         lastCheckInAt = 0
         offeredEaseOff = false
@@ -176,6 +217,8 @@ final class WorkoutRunner: ObservableObject {
         phase = .idle
         workout = nil
         offer = nil
+        editNotice = nil
+        undoSnapshot = nil
     }
 
     // MARK: Manual changes from the live screen tiles
@@ -221,15 +264,20 @@ final class WorkoutRunner: ObservableObject {
     }
 
     /// Replaces the remaining steps and optionally changes the current step now (AI or rule edits).
+    /// Keeps the previous workout for Undo and shows the new length for 10 seconds.
     func applyEdit(remaining: [WorkoutStep], currentMph: Double?, currentIncline: Double?, note detail: String) {
         guard isActive, var workout else { return }
+        let before = workout.totalSeconds
+        undoSnapshot = workout
+        undoChangedCurrent = currentMph != nil || currentIncline != nil
         let start = stepIndex + 1
         workout.steps = SafetyCheck.clamped(Array(workout.steps.prefix(start)) + remaining)
         if let mph = currentMph { workout.steps[stepIndex].mph = mph }
         if let incline = currentIncline { workout.steps[stepIndex].incline = incline }
         workout.steps = SafetyCheck.clamped(workout.steps)
         self.workout = workout
-        note(.aiEdit, detail)
+        let after = workout.totalSeconds
+        note(.aiEdit, "\(detail) (length \(Self.clock(before)) → \(Self.clock(after)))")
         if phase == .running, let step = currentStep {
             if currentMph != nil {
                 treadmill.setSpeed(step.mph)
@@ -239,6 +287,33 @@ final class WorkoutRunner: ObservableObject {
                 treadmill.setIncline(step.incline)
                 expectedIncline = step.incline
             }
+            commandedAt = Date()
+        }
+        activity.update(activityState())
+
+        let notice = EditNotice(text: "Workout length \(Self.clock(after)), was \(Self.clock(before))")
+        editNotice = notice
+        Task {
+            try? await Task.sleep(for: .seconds(10))
+            if editNotice == notice {
+                editNotice = nil
+                undoSnapshot = nil
+            }
+        }
+    }
+
+    /// Puts the workout back as it was before the last live edit (available for 10 seconds).
+    func undoLastEdit() {
+        guard let snapshot = undoSnapshot, isActive else { return }
+        workout = snapshot
+        undoSnapshot = nil
+        editNotice = nil
+        note(.aiEdit, "undid the last change (length \(Self.clock(snapshot.totalSeconds)))")
+        if undoChangedCurrent, phase == .running, let step = currentStep {
+            treadmill.setSpeed(step.mph)
+            treadmill.setIncline(step.incline)
+            expectedMph = step.mph
+            expectedIncline = step.incline
             commandedAt = Date()
         }
         activity.update(activityState())
@@ -254,11 +329,11 @@ final class WorkoutRunner: ObservableObject {
         guard let current = currentStep else { return }
         switch feeling {
         case "Hard":
-            let easier = LiveCoach.rules(.easier, current: current, remaining: remainingSteps)
+            let easier = LiveCoach.easier(current: current, remaining: remainingSteps)
             applyEdit(remaining: easier.remaining, currentMph: easier.currentMph, currentIncline: easier.currentIncline,
                       note: "check-in hard: eased off")
         case "Easy":
-            let harder = LiveCoach.rules(.harder, current: current, remaining: remainingSteps)
+            let harder = LiveCoach.harder(current: current, remaining: remainingSteps)
             present(Offer(message: "Feeling easy? Make it a bit harder (+0.3 mph, +1%) from now on?",
                           action: .edit(remaining: harder.remaining, currentMph: harder.currentMph,
                                         currentIncline: harder.currentIncline),
@@ -335,6 +410,8 @@ final class WorkoutRunner: ObservableObject {
             }
 
             detectConsoleChanges(now: now)
+            peakMph = max(peakMph, treadmill.speedMph ?? 0)
+            peakIncline = max(peakIncline, treadmill.incline ?? 0)
             stepElapsed += delta
             totalElapsed += delta
             let checkInMinutes = UserDefaults.standard.integer(forKey: Self.checkInKey)
@@ -443,7 +520,7 @@ final class WorkoutRunner: ObservableObject {
     private func recordSpeedChange(to value: Double, source: String) {
         let delta = value - expectedMph
         guard abs(delta) >= 0.05 else { return }
-        note(.speed, String(format: "speed %.1f → %.1f mph %@", expectedMph, value, source), delta: delta)
+        logChange(.speed, from: expectedMph, to: value, source: source) { String(format: "speed %.1f → %.1f mph", $0, $1) }
         expectedMph = value
         offerAdjustRestIfRepeated()
         offerEaseOffIfSlowingDown()
@@ -463,24 +540,39 @@ final class WorkoutRunner: ObservableObject {
             note: "lowered the rest by \(amount) mph after repeated slow-downs"))
     }
 
-    /// Two skipped steps → offer to shorten the rest by 20% (once).
+    /// Two skipped steps → offer to cut the last 5 minutes before the cool-down (once).
     private func offerShortenIfSkipping() {
         guard offer == nil, !offeredShorten, let current = currentStep, remainingSteps.count > 1 else { return }
         guard deviations.filter({ $0.kind == .skip }).count >= 2 else { return }
+        guard let shorter = LiveCoach.shorter(current: current, remaining: remainingSteps) else { return }
         offeredShorten = true
-        let shorter = LiveCoach.rules(.shorter, current: current, remaining: Array(remainingSteps.dropFirst()))
-        let next = Array(remainingSteps.prefix(1))
         present(Offer(
-            message: "You've skipped two steps. Shorten the rest of the workout by 20%?",
-            action: .edit(remaining: next + shorter.remaining, currentMph: nil, currentIncline: nil),
-            note: "shortened the rest by 20% after skipping"))
+            message: "You've skipped two steps. Cut the last 5 minutes before the cool-down?",
+            action: .edit(remaining: shorter.remaining, currentMph: nil, currentIncline: nil),
+            note: "cut 5 minutes after skipping steps"))
     }
 
     private func recordInclineChange(to value: Double, source: String) {
         let delta = value - expectedIncline
         guard abs(delta) >= 0.25 else { return }
-        note(.incline, String(format: "incline %.1f → %.1f%% %@", expectedIncline, value, source), delta: delta)
+        logChange(.incline, from: expectedIncline, to: value, source: source) { String(format: "incline %.1f → %.1f%%", $0, $1) }
         expectedIncline = value
+    }
+
+    /// Logs a speed or incline change. Taps on the same tile within 3 s (same step, same source) merge
+    /// into one entry that shows where it started and where it ended up.
+    private func logChange(_ kind: Deviation.Kind, from: Double, to: Double, source: String,
+                           format: (Double, Double) -> String) {
+        if let last = lastChange[kind], last.source == source, last.step == stepIndex,
+           totalElapsed - last.at <= 3, last.index < deviations.count, deviations[last.index].kind == kind {
+            deviations[last.index].delta = to - last.from
+            deviations[last.index].detail = format(last.from, to) + " " + source
+            lastChange[kind]?.at = totalElapsed
+            return
+        }
+        note(kind, format(from, to) + " " + source, delta: to - from)
+        lastChange[kind] = ChangeOrigin(index: deviations.count - 1, from: from, at: totalElapsed,
+                                        source: source, step: stepIndex)
     }
 
     /// Manual speed changes in the same direction in two steps in a row → offer to shift the rest.
@@ -530,11 +622,14 @@ final class WorkoutRunner: ObservableObject {
         closing.progress = reason == "Workout complete" ? 1 : progress
         activity.end(final: closing)
         if let workout {
+            let reached = peakMph > 0
             onFinish?(HistoryEntry(
                 date: Date(), name: workout.name, plannedSeconds: workout.totalSeconds,
-                seconds: Int(totalElapsed), miles: treadmill.miles, maxMph: workout.maxMph,
-                maxIncline: workout.maxIncline, completed: reason == "Workout complete",
-                deviations: deviations))
+                seconds: Int(totalElapsed), miles: treadmill.miles,
+                maxMph: reached ? peakMph : workout.maxMph,
+                maxIncline: reached ? peakIncline : workout.maxIncline,
+                completed: reason == "Workout complete", deviations: deviations,
+                originalSeconds: originalSeconds))
         }
     }
 }

@@ -89,4 +89,6 @@ struct HistoryEntry: Codable, Identifiable {
     var completed: Bool
     var effort: Int?
     var deviations: [Deviation]? = nil
+    /// Length when the workout started; `plannedSeconds` is the length at the end, after live edits
+    var originalSeconds: Int? = nil
 }

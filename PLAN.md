@@ -82,7 +82,7 @@ Setting: **Off** (default), **Apple Watch (via Health)**, or **Bluetooth monitor
 - **Limits:** 0.5–10 mph, 0–10%; scrolling stops at the edges.
 - **Scope of a change:** lasts until the next step (default). After manual changes in two steps in a row, offer "Adjust the rest of the workout by the same amount?".
 
-**End workout, with the incline back to 0%** (planned, from the 2026-11 field test; not built yet)
+**End workout, with the incline back to 0%** (built in 0.7, sequence fix pending)
 - **Treadmill mode** (manual use): an **End workout** button on the Treadmill tab, shown once the belt has run.
 - **Workouts:** finishing or **End workout** on the live screen ends the workout.
 - **What ending does, in order:**
@@ -92,7 +92,13 @@ Setting: **Off** (default), **Apple Watch (via Health)**, or **Bluetooth monitor
   4. Show the summary (time, distance, effort rating).
   5. End the Live Activity with the summary.
 - **STOP vs End workout:** STOP is the instant emergency stop. It stops the belt and **leaves the incline where it is**; during a workout it pauses the workout with **Resume** and **End workout**. The incline only goes back to 0% when the workout is ended.
-- To test first: that the console accepts an incline command while the belt is stopped. If it doesn't, End workout sends incline 0% just before the stop instead.
+- **Fix (bug found 2026-11):** 0.7 sends incline 0% and then Stop half a second later; the Stop (pause) freezes the incline motor, so the deck stays up.
+  - **Sequence to use (user's choice):** Stop the belt, wait 2 s, send incline 0%. No waiting for readings.
+  - Tested from the PC 2026-11: the console accepts incline 0% with the belt stopped, and the user confirmed the deck lowers to flat.
+  - Readings while running show the *target* incline; after Stop they show the deck's real position.
+
+**STOP button only when the belt is running** (note from 2026-11, not built yet)
+- The red STOP shows only while the belt is moving (and during a workout's starting phase); hidden when connected but stopped.
 
 ### 4. Heart-rate hold
 Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR formula, and how commercial gym treadmill HR programs behave. All of them can be changed in settings.
@@ -185,6 +191,22 @@ Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR form
 6. **Run and learn:** after the workout, a 1–10 effort rating plus what actually happened (completed, stopped early, manual speed changes on the console) feed the next suggestion.
 - Saved workouts go to `workouts/` in the data folder as plain JSON; hand-made workouts use the same editor.
 
+**Workout length guarantee** (hard requirement from the user, 2026-11: "if I ask for 60 minutes I'm expecting 60 minutes"; planned, not built)
+- **One length, everywhere:** the requested minutes are the workout's total, including warm-up and cool-down, to the second (60 min = 60:00).
+- **Text counts:** a length in the request text ("1 hr", "an hour", "45 minutes", "hour and a half") sets the length and moves the picker, so text and picker can't disagree. The Create button states it ("Create 60-min workout") and the preview shows the exact total.
+- **Enforced, not trusted:** after the AI (or rules) make a workout, the app checks the total. If it's off it adjusts the steps (keeping each at least 30 s, merging the shortest steps if it must); if it still can't match, it falls back to the built-in rules. A workout that misses never reaches the preview.
+- **Found 2026-11 in a test of the scaling logic:** 60-min requests always came out exact (0 of 300 misses), but short requests with many tiny steps could overshoot (a 30-min request missed 3 of 300 times, longer than asked) because of the 30 s minimum step. The fix above closes this.
+- **Live edits:** Shorter / Longer become fixed −5 / +5 min (stated on the buttons). A typed or spoken length request ("make it an hour total") is enforced against the real remaining time the same way.
+  - **Visible and reversible:** after every live edit the screen shows the new total next to the original ("Workout length 55:00, was 60:00") with an **Undo** button for 10 s (or until the next step starts).
+  - **What the user's history file showed (2026-11-17):** a 60-min request ended at 33:30. No Shorter was used. The AI's "easier" edit at 22:30 is the only edit that could have cut time, and nothing checked the remaining length. The three Longer taps (24:50, 28:07, 32:45) added nothing: the AI said it "extended to match the total time" but the workout still ended at 33:30, and the last tap came with only the cool-down left, which Longer never touches. History stored only the final length, so the original is unknown.
+  - **Rule:** every AI edit is checked against the remaining time. Easier/Harder and typed requests must leave the remaining duration unchanged (±5 s); Shorter/Longer must change it by exactly 5 min. An edit that misses is repaired or replaced by the fixed rules. What the AI says it did is never trusted.
+  - **Longer with little left** adds a block of the last main step before the cool-down, so it always adds time.
+  - Each logged edit records the total length before and after. Rapid taps on one tile (e.g. four incline taps in a second) are merged into one logged change.
+  - **History** records the original planned length as well as the final one, plus each length change with its time. Top speed and incline show what was actually reached, not the plan's.
+- **Plans** use the same path (the plan's minutes).
+- **Checked automatically:** a test run on every build creates workouts for every length from 10 to 90 min (rules and simulated AI outputs) and fails the build if any total is off by even a second.
+- Time actually spent: the workout is the planned running time; paused time doesn't count toward it. History shows planned vs. actual.
+
 **Apple Intelligence during the workout** (planned, not built; chosen 2026-11)
 - **A. Live editing on request**
   - Quick buttons on the live screen: **Easier**, **Harder**, **Shorter**, **Longer**, plus requests like "skip the hills", "my knees hurt", "add 5 minutes at the end", **typed or spoken**.
@@ -202,6 +224,25 @@ Defaults follow common practice: ACSM intensity guidance, the Tanaka max-HR form
 
 ### 8. Screens
 - **iPhone:** connect, workout list, workout editor, live workout (HR and target, speed, incline, time, distance, current/next step, STOP), history, settings.
+
+### 8b. No-scroll layout (decided 2026-11, from the second field test: "too cluttered, I don't have to scroll in a session")
+Both session screens fit on one phone screen with no scrolling. Each thing appears once; everything occasional lives in an overlay or sheet.
+- **Treadmill screen**
+  - Top: status dot and text, plus a ••• menu (Disconnect, "The console Stop button and the safety key always work").
+  - Middle: the Speed and Incline tiles are the big readout *and* the controls (tap ▲▼, or hold and slide). They fill the height; numbers scale up.
+  - One slim line: moving time and miles.
+  - Bottom bar, always in the same place: **End workout** + **STOP** while the belt runs; **Start** (alone, or beside End workout in an open session) when stopped.
+  - Messages (console changes, "Session saved") are toasts at the top that fade; no fine print on the screen.
+  - The quick-speed chips are gone (hold-and-slide covers them).
+- **Workout screen**
+  - Top: name, elapsed / total, and the **profile chart as the progress bar**, with a marker for where you are.
+  - Middle: the step ring is the hero (countdown, step name, "Next: …"); Speed and Incline tiles below.
+  - Bottom bar: ✦ **Coach**, **Pause**, **Skip**, **STOP** in one row (paused: ✦, **Resume**, **End workout**).
+  - **Coach sheet** (slides up from ✦): Easier / Harder / −5 min / +5 min, the text box and mic, and the "Workout length 33:00 (was 33:00)" line with Undo.
+  - **Check-ins, offers and the length notice** float over the top as a slim card, so they never push the layout.
+  - A connection loss shows a compact Connect button in the status row.
+- **Start has a cancellable 3-2-1 countdown** in the same spot as STOP, so a double-tap on STOP can't restart the belt.
+- Everything is sized to fit one screen, including smaller iPhones (numbers scale down; nothing scrolls).
 
 ## Build and install (no Mac)
 - Project kept as text in a GitHub repo (XcodeGen or similar).
@@ -226,6 +267,26 @@ Scope agreed 2026-11 after the first field test. **Built 2026-11-10** (plus dele
 | Delete workout history (swipe one entry, or Delete all with confirmation) | History tab |
 
 **On hold:** saving workouts to Apple Health (milestone 4) and everything heart-rate (milestone 3, waits for the sensor).
+
+## Fixes build (0.7.1): fixes from the field tests
+All collected from the user's real runs (2026-11). Not started; waits for the user's go-ahead. Details are in the sections named in each row.
+
+| # | Fix | Why it's needed | Details |
+|---|---|---|---|
+| 1 | **Workout length guarantee:** ask for 60 min, get exactly 60:00 | A 60-min request ended at 33:30; no check on AI edits | §7 "Workout length guarantee" |
+| 2 | Length typed in the text ("1 hr", "an hour") sets the length and the picker; button and preview show the exact total | The app only read the picker | same |
+| 3 | **Live edits are checked:** Easier/Harder/typed requests keep the remaining time; Shorter/Longer are exactly ±5 min; Longer near the end adds a block before the cool-down | AI "Easier" could cut time unchecked; three Longer taps added nothing while the AI claimed it did | same |
+| 4 | New total shown after every live edit ("55:00, was 60:00") with Undo for 10 s | Nothing told the user the workout had shrunk | same |
+| 5 | **End workout sequence:** Stop the belt, wait 2 s, send incline 0% (tested on the treadmill; the deck lowers) | The old order (incline 0% then Stop) left the deck up | §3 "End workout" |
+| 6 | **STOP shows only while the belt runs** | A STOP button on a stopped treadmill | §3 |
+| 7 | **History:** original planned length plus the final one; top speed and incline actually reached; length changes logged with before/after totals; rapid taps on one tile merged into one entry | Four incline taps were logged as four changes; History showed the plan's values | §7 |
+| 9 | **No-scroll Treadmill and Workout screens** (one set of controls, one bottom bar, coach in a sheet, overlays for check-ins) | The screens were cluttered and needed scrolling mid-session | §8b |
+| 8 | **Length test on every build:** creates workouts for every length 10–90 min (rules and simulated AI output) and fails the build if any total is off | So it can't regress | §7 |
+
+**Proposed, not yet agreed by the user** (decide before building):
+- **Autosave and recovery:** the workout or session in progress is saved every 30 s and at each pause; after an app restart, offer Resume / Save as ended / Discard. During a connection drop, distance is estimated from the last speed (capped at a few minutes, marked estimated in History). Today a workout in progress is lost if the app is closed.
+- **Speed safety guards:** a maximum speed the app never commands above, an automatic STOP if the treadmill reports a speed over that limit, a limit on speed jumps per command, and a treadmill event log. Background: in 2026-11 the treadmill's speed crept up by itself because of a broken keypad membrane (hardware, not the app); the guards would have stopped it automatically.
+- **Check-in "Hard" stacks** (−0.3 mph and −1% each time): show the total eased amount, e.g. "eased off 0.6 mph so far".
 
 ## Milestones
 | # | Milestone | Done when |

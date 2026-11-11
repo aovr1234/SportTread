@@ -6,6 +6,7 @@ struct CreateWorkoutView: View {
     @EnvironmentObject private var library: WorkoutLibrary
     @EnvironmentObject private var readiness: Readiness
     @State private var request = WorkoutRequest()
+    @State private var lengthFromNote: String?
     @AppStorage(WorkoutRunner.checkInKey) private var checkInMinutes = 0
     @State private var created: Workout?
 
@@ -49,6 +50,18 @@ struct CreateWorkoutView: View {
                 Section {
                     TextField("e.g. knees are sore, or push me today", text: $request.notes, axis: .vertical)
                         .lineLimit(1...3)
+                        .onChange(of: request.notes) { _, text in
+                            // A length in the text counts: it sets the picker, so the two can't disagree
+                            if case .total(let minutes)? = LengthParser.request(in: text) {
+                                request.minutes = min(max(minutes, 10), 90)
+                                lengthFromNote = minutes > 90 ? "\(minutes) min is more than the longest workout (90 min)" : "Using \(minutes) min from your note"
+                            } else {
+                                lengthFromNote = nil
+                            }
+                        }
+                    if let lengthFromNote {
+                        Label(lengthFromNote, systemImage: "clock.badge.checkmark").font(.footnote).foregroundStyle(Theme.lime)
+                    }
                 } header: {
                     Text("Anything else? (optional)")
                 }
@@ -63,7 +76,7 @@ struct CreateWorkoutView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "sparkles")
                                 .symbolEffect(.pulse, isActive: coach.isWorking)
-                            Text(coach.isWorking ? "Creating…" : "Create workout")
+                            Text(coach.isWorking ? "Creating…" : "Create \(request.minutes)-min workout")
                         }
                     }
                     .buttonStyle(SportButtonStyle(kind: .go))

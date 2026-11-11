@@ -93,8 +93,8 @@ enum SafetyCheck {
     static func clamped(_ input: [WorkoutStep]) -> [WorkoutStep] {
         var steps = input.map { step in
             var s = step
-            s.mph = (min(max(s.mph, TreadmillController.minMph), TreadmillController.maxMph) * 10).rounded() / 10
-            s.incline = (min(max(s.incline, 0), TreadmillController.maxIncline) * 2).rounded() / 2
+            s.mph = (min(max(s.mph, TreadmillLimits.minMph), TreadmillLimits.maxMph) * 10).rounded() / 10
+            s.incline = (min(max(s.incline, 0), TreadmillLimits.maxIncline) * 2).rounded() / 2
             s.seconds = max(30, s.seconds)
             return s
         }
@@ -108,8 +108,8 @@ enum SafetyCheck {
         var workout = input
         var steps = workout.steps.map { step in
             var s = step
-            s.mph = (min(max(s.mph, TreadmillController.minMph), TreadmillController.maxMph) * 10).rounded() / 10
-            s.incline = (min(max(s.incline, 0), TreadmillController.maxIncline) * 2).rounded() / 2
+            s.mph = (min(max(s.mph, TreadmillLimits.minMph), TreadmillLimits.maxMph) * 10).rounded() / 10
+            s.incline = (min(max(s.incline, 0), TreadmillLimits.maxIncline) * 2).rounded() / 2
             s.seconds = max(30, s.seconds)
             if s.label.trimmingCharacters(in: .whitespaces).isEmpty { s.label = "Step" }
             return s
@@ -123,16 +123,13 @@ enum SafetyCheck {
             steps.append(WorkoutStep(label: "Cool-down", seconds: 180, mph: max(last.mph - 0.5, 1.5), incline: 0))
         }
 
-        // Scale to the requested length, keeping steps at least 30 s, in 5-second units
-        if let totalMinutes {
-            let target = Double(totalMinutes * 60)
-            let current = Double(steps.reduce(0) { $0 + $1.seconds })
-            for i in steps.indices {
-                steps[i].seconds = max(30, Int((Double(steps[i].seconds) * target / current / 5).rounded()) * 5)
-            }
-            let diff = Int(target) - steps.reduce(0) { $0 + $1.seconds }
-            if let longest = steps.indices.max(by: { steps[$0].seconds < steps[$1].seconds }) {
-                steps[longest].seconds = max(30, steps[longest].seconds + diff)
+        // Exactly the requested length: steps stay at least 30 s, in 5-second units; if there are too
+        // many steps for that, the smallest inner ones are merged (see LengthFit)
+        if let totalMinutes, let fitted = LengthFit.fit(steps.map(\.seconds), to: totalMinutes * 60) {
+            steps = fitted.kept.enumerated().map { position, original in
+                var s = steps[original]
+                s.seconds = fitted.seconds[position]
+                return s
             }
         }
 

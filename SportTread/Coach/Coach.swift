@@ -33,7 +33,7 @@ final class Coach: ObservableObject {
             do {
                 let made = try await AppleIntelligence.workout(for: resolved, history: history)
                 let safe = SafetyCheck.repair(made, totalMinutes: resolved.minutes)
-                if safe.problems.isEmpty {
+                if safe.problems.isEmpty, safe.totalSeconds == resolved.minutes * 60 {
                     note = "Created with Apple Intelligence"
                     return safe
                 }
@@ -41,11 +41,16 @@ final class Coach: ObservableObject {
             } catch {
                 note = "Apple Intelligence couldn't create it (\(error.localizedDescription)), so the built-in rules made this one."
             }
-            return TemplateCoach.make(resolved, history: history)
+            return Self.exact(TemplateCoach.make(resolved, history: history), minutes: resolved.minutes)
         }
         #endif
         note = "Made with the built-in rules (Apple Intelligence: \(Self.appleIntelligenceStatus))."
-        return TemplateCoach.make(resolved, history: history)
+        return Self.exact(TemplateCoach.make(resolved, history: history), minutes: resolved.minutes)
+    }
+
+    /// A workout of any other length never reaches the preview: if it's off, it's fitted to the requested minutes.
+    private static func exact(_ workout: Workout, minutes: Int) -> Workout {
+        workout.totalSeconds == minutes * 60 ? workout : SafetyCheck.repair(workout, totalMinutes: minutes)
     }
 
     static var appleIntelligenceStatus: String {
