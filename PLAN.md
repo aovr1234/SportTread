@@ -1,6 +1,6 @@
 # Andrew's SportTread: Plan
 
-Status: milestones 0, 1, 2 passed (2026-11-09); milestone 5 (AI coach) passed, Live Activity works; connection reliability built, testing; milestone 3 waits for the HR sensor; milestone 4 next. Last updated 2026-11-01.
+Status: 0.7.1 (fixes and no-scroll screens) built 2026-11-11, testing; milestones 0, 1, 2 passed (2026-11-09); milestone 5 (AI coach) passed, Live Activity works; connection reliability built, testing; milestone 3 waits for the HR sensor; milestone 4 next. Last updated 2026-11-01.
 
 ## Name
 - App name: **Andrew's SportTread** (in-app title, splash, settings, Health source name).
@@ -269,7 +269,7 @@ Scope agreed 2026-11 after the first field test. **Built 2026-11-10** (plus dele
 **On hold:** saving workouts to Apple Health (milestone 4) and everything heart-rate (milestone 3, waits for the sensor).
 
 ## Fixes build (0.7.1): fixes from the field tests
-All collected from the user's real runs (2026-11). Not started; waits for the user's go-ahead. Details are in the sections named in each row.
+All collected from the user's real runs (2026-11). **Built 2026-11-11 as 0.7.1** (rows 1–9), testing. The proposals below the table were not included. Details are in the sections named in each row.
 
 | # | Fix | Why it's needed | Details |
 |---|---|---|---|
