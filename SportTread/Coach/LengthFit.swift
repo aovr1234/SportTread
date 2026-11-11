@@ -69,7 +69,7 @@ enum LengthParser {
         ]
         for (word, number) in words { s = s.replacingOccurrences(of: word, with: number) }
 
-        let pattern = #"(\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?)\b(?!\s*(?:warm|cool|rest|recover|interval|each|every|per|break|pause))"#
+        let pattern = #"(\d+(?:\.\d+)?)\s*(?:more\s+|extra\s+|additional\s+|full\s+)?(hours?|hrs?|minutes?|mins?)\b(?!\s*(?:warm|cool|rest|recover|interval|each|every|per|break|pause))"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         var total = 0.0
         var found = false
