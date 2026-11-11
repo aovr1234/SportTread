@@ -14,6 +14,9 @@ struct AdjustTile: View {
     let range: ClosedRange<Double>
     let decimals: Int
     var enabled = true
+    /// Size of the number; with `expand` the tile fills the height it's offered (no-scroll screens)
+    var valueSize: CGFloat = 42
+    var expand = false
     let onCommit: (Double) -> Void
 
     @State private var scrub: Double?
@@ -47,7 +50,7 @@ struct AdjustTile: View {
                 .foregroundStyle(.secondary)
             arrow("chevron.up", direction: 1)
             Text(displayText)
-                .font(.system(size: 42, weight: .heavy, design: .rounded).monospacedDigit())
+                .font(.system(size: valueSize, weight: .heavy, design: .rounded).monospacedDigit())
                 .foregroundStyle(highlighted ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.white))
                 .contentTransition(.numericText())
                 .animation(.snappy, value: displayText)
@@ -58,6 +61,7 @@ struct AdjustTile: View {
         }
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
+        .frame(maxHeight: expand ? .infinity : nil)
         .glassCard(tint: scrub != nil ? Theme.cyan : nil, interactive: true)
         .scaleEffect(scrub != nil ? 1.04 : 1)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: scrub != nil)
@@ -80,7 +84,7 @@ struct AdjustTile: View {
         } label: {
             Image(systemName: symbol)
                 .font(.title2.weight(.bold))
-                .frame(maxWidth: .infinity, minHeight: 40)
+                .frame(maxWidth: .infinity, minHeight: 40, maxHeight: expand ? .infinity : 40)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

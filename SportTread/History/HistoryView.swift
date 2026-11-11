@@ -110,7 +110,14 @@ private struct HistoryDetailView: View {
             Section("Summary") {
                 LabeledContent("Date", value: entry.date.formatted(date: .complete, time: .shortened))
                 LabeledContent("Result", value: entry.completed ? "Completed" : "Ended early")
-                if entry.plannedSeconds > 0 { LabeledContent("Planned", value: "\(entry.plannedSeconds / 60) min") }
+                if let original = entry.originalSeconds, original > 0 {
+                    LabeledContent("Planned at start", value: "\(original / 60):\(String(format: "%02d", original % 60))")
+                    if entry.plannedSeconds != original {
+                        LabeledContent("Planned at the end", value: "\(entry.plannedSeconds / 60):\(String(format: "%02d", entry.plannedSeconds % 60))")
+                    }
+                } else if entry.plannedSeconds > 0 {
+                    LabeledContent("Planned", value: "\(entry.plannedSeconds / 60) min")
+                }
                 LabeledContent("Top speed", value: String(format: "%.1f mph", entry.maxMph))
                 LabeledContent("Top incline", value: String(format: "%.1f%%", entry.maxIncline))
             }

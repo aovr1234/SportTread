@@ -177,6 +177,8 @@ struct WorkoutProfile: View {
     var height: CGFloat
     var showAxes: Bool
     var highlight: Int?
+    /// Where the workout is now, in minutes: drawn as a marker (the chart doubles as the progress bar)
+    var position: Double?
 
     private struct Segment: Identifiable {
         let id: Int
@@ -196,13 +198,20 @@ struct WorkoutProfile: View {
     }
 
     var body: some View {
-        Chart(segments) { segment in
-            RectangleMark(
-                xStart: .value("Start", segment.start),
-                xEnd: .value("End", segment.end),
-                yStart: .value("Base", 0),
-                yEnd: .value("mph", segment.mph))
-                .foregroundStyle(color(for: segment))
+        Chart {
+            ForEach(segments) { segment in
+                RectangleMark(
+                    xStart: .value("Start", segment.start),
+                    xEnd: .value("End", segment.end),
+                    yStart: .value("Base", 0),
+                    yEnd: .value("mph", segment.mph))
+                    .foregroundStyle(color(for: segment))
+            }
+            if let position {
+                RuleMark(x: .value("Now", position))
+                    .foregroundStyle(Theme.cyan)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+            }
         }
         .chartYScale(domain: 0...max(4, workout.maxMph + 0.5))
         .chartXAxis(showAxes ? .automatic : .hidden)
