@@ -13,6 +13,7 @@ struct ContentView: View {
     @ObservedObject private var liveActivity = LiveActivityStatus.shared
     @State private var confirmingDelete = false
     @State private var testActivity = WorkoutActivity()
+    @AppStorage(WorkoutSummary.weightKey) private var weightLb = WorkoutSummary.defaultWeightLb
 
     private func backUp() {
         guard let file = dataFolder.makeBackupFile() else { return }
@@ -34,6 +35,14 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    Stepper("\(Int(weightLb)) lb", value: $weightLb, in: 80...400, step: 1)
+                } header: {
+                    Text("Body weight")
+                } footer: {
+                    Text("Used only for the calorie estimate on the workout summary (an estimate, usually within about 15%).")
+                }
+
                 Section {
                     LabeledContent("Allowed", value: liveActivity.enabled ? "Yes" : "No (Settings › SportTread)")
                     LabeledContent("Extension", value: liveActivity.extensions.isEmpty

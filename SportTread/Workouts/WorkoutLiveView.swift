@@ -55,12 +55,19 @@ struct WorkoutLiveView: View {
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-            if let workout = runner.workout {
-                WorkoutProfile(workout: workout, height: 44, showAxes: false,
-                               highlight: runner.stepIndex, position: runner.totalElapsed / 60)
+            if !isFinished {
+                if let workout = runner.workout {
+                    WorkoutProfile(workout: workout, height: 44, showAxes: false,
+                                   highlight: runner.stepIndex, position: runner.totalElapsed / 60)
+                }
+                statusRow
             }
-            statusRow
         }
+    }
+
+    private var isFinished: Bool {
+        if case .finished = runner.phase { return true }
+        return false
     }
 
     private var statusRow: some View {
@@ -166,7 +173,18 @@ struct WorkoutLiveView: View {
             if runner.checkInDue { checkInCard.transition(.move(edge: .top).combined(with: .opacity)) }
             if let offer = runner.offer { offerBanner(offer).transition(.move(edge: .top).combined(with: .opacity)) }
             if let notice = runner.editNotice { noticeCard(notice).transition(.move(edge: .top).combined(with: .opacity)) }
+            if let problem = treadmill.commandProblem {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text(problem).font(.subheadline.weight(.semibold)).lineLimit(2)
+                    Spacer(minLength: 0)
+                }
+                .padding(12)
+                .glassCard(cornerRadius: 18, tint: .orange)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
         }
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: treadmill.commandProblem)
         .padding(.horizontal)
         .padding(.top, 6)
     }
@@ -262,17 +280,23 @@ struct WorkoutLiveView: View {
     // MARK: Summary
 
     private func summary(_ reason: String) -> some View {
-        VStack(spacing: 16) {
-            Spacer(minLength: 0)
-            Image(systemName: reason == "Workout complete" ? "checkmark.seal.fill" : "flag.checkered")
-                .font(.system(size: 60))
-                .foregroundStyle(Theme.accent)
-                .symbolEffect(.bounce, value: reason)
-            Text(reason).font(.largeTitle.weight(.heavy))
-            HStack(spacing: 12) {
-                MetricTile(value: clock(treadmill.movingSeconds), unit: "moving time", size: 30)
-                MetricTile(value: String(format: "%.2f", treadmill.miles), unit: "miles", size: 30)
+        VStack(spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: reason == "Workout complete" ? "checkmark.seal.fill" : "flag.checkered")
+                    .font(.title)
+                    .foregroundStyle(Theme.accent)
+                    .symbolEffect(.bounce, value: reason)
+                Text(reason).font(.title.weight(.heavy))
             }
+            if let entry = library.history.last, entry.name == runner.workout?.name {
+                SummaryBlock(entry: entry, others: library.history.filter { $0.id != entry.id })
+            } else {
+                HStack(spacing: 12) {
+                    MetricTile(value: clock(treadmill.movingSeconds), unit: "moving time", size: 30)
+                    MetricTile(value: String(format: "%.2f", treadmill.miles), unit: "miles", size: 30)
+                }
+            }
+            Spacer(minLength: 0)
             VStack(alignment: .leading, spacing: 8) {
                 Text("How hard was it? (1 = very easy, 10 = all out)").font(.subheadline).foregroundStyle(.secondary)
                 HStack(spacing: 4) {
@@ -292,13 +316,9 @@ struct WorkoutLiveView: View {
                     }
                 }
                 .sensoryFeedback(.selection, trigger: effort)
-                Text("The coach uses this for your next workout. The incline lowers to 0% a moment after the belt stops.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
             }
-            .padding(14)
+            .padding(12)
             .glassCard()
-            Spacer(minLength: 0)
             Button {
                 runner.dismiss()
             } label: {

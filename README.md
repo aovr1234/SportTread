@@ -2,7 +2,7 @@
 
 iPhone app that runs a ProForm 505 CST treadmill without iFit. See [PLAN.md](PLAN.md).
 
-## Current stage: build 0.7.1 (fixes from the field tests + no-scroll screens)
+## Current stage: build 0.7.2 (command pacing, resume fix, summary, Live Activity buttons)
 Passed so far: milestones 0, 1, 2, 5, the Live Activity and two field tests. On hold: saving to Apple Health,
 heart rate (waits for the Bluetooth sensor), autosave/recovery and speed guards (proposed, not agreed).
 
@@ -14,21 +14,19 @@ heart rate (waits for the Bluetooth sensor), autosave/recovery and speed guards 
 Every build first runs the length tests (`Tests/LengthTests`): every workout length from 10 to 90 minutes,
 simulated AI workouts, live edits and reading a length from text must come out exact, or the build fails.
 
-### Test
+### Test (0.7.2)
 | # | Test | Pass when |
 |---|---|---|
-| 1 | Treadmill tab | Everything fits on one screen, no scrolling: status row, Speed and Incline tiles, time and miles, bottom bar |
-| 2 | Tap **Start** | A 3-2-1 countdown ("tap to cancel"), then the belt starts at 1.0 mph; tapping during the countdown cancels |
-| 3 | STOP, End workout | STOP only shows while the belt runs; **End workout** stops the belt, then 2 s later lowers the deck to 0%, and shows "Session saved" |
-| 4 | Coach tab: pick **60**, **Create 60-min workout** | The preview says exactly 60 min; the button says "Create 60-min workout" |
-| 5 | Type "1 hr" (or "an hour") in the notes | "Using 60 min from your note", and the picker moves to 60 |
-| 6 | Start a workout | Fits one screen, no scrolling; the profile chart has a marker that moves; the step ring, Speed and Incline tiles, one bottom bar |
-| 7 | ✦ Coach → **−5 min** | Applies at once; a card says "Workout length 55:00, was 60:00" with **Undo** for 10 s; Undo restores it |
-| 8 | ✦ Coach → **+5 min** / **Harder** | An Apply card appears (nothing changes until you tap Apply); then the length card shows 65:00 |
-| 9 | ✦ Coach → type "add 5 minutes", then "make it an hour total" | The workout is exactly 5 minutes longer, then exactly 60:00 in total |
-| 10 | Check-ins (Coach tab: every 5 min) during a workout | "How's it feeling?" floats over the top without moving anything |
-| 11 | During a workout: STOP, then Resume / End workout | STOP pauses (belt stops, incline stays); End workout stops, then lowers the deck |
-| 12 | History tab → the workout | "Planned at start" and "at the end", top speed and incline you actually reached, and "What changed" with before/after lengths; rapid incline taps are one entry |
+| 1 | Treadmill: tap Speed ▼ 10 times quickly | The belt slows in steps, the connection never times out, the status keeps updating |
+| 2 | Workout: Pause, wait, Resume (5 times) | The incline returns to the step's value every time; if the console drops it the app sends it again; if it can't, an orange "Incline didn't take" card shows |
+| 3 | Coach tab → Start a plan | The Goal list shows four rows with a description each; tapping one selects it with a check mark; the sheet stays open until Start or Cancel |
+| 4 | Finish a workout | One screen, no scrolling: distance, time, average speed, pace, feet climbed, calories (estimate), average incline, a chart, last-time comparison |
+| 5 | Treadmill: End workout after a few minutes | A summary sheet opens on the Treadmill tab; Done closes it |
+| 6 | History → a new session | The same numbers, a larger chart, mile splits (after a mile) and "What changed"; old sessions still open |
+| 7 | Setup → Body weight | Changing it changes the calories on the next summary |
+| 8 | Lock the phone during a workout | The Live Activity shows − + ⏸ ⏹ buttons; − and + change the speed by 0.5 mph, ⏸ pauses and resumes, ⏹ stops the belt |
+| 9 | Same, in treadmill mode (no workout) | − + ⏹ work the same |
+| 10 | Watch the Live Activity icon | Standing when stopped, walking, running from 4 mph, hiking at 5% incline or more at walking speed |
 
 Still to check from 0.7: the treadmill-mode Live Activity (ends 2 min after stopping), readiness, goal plans,
 the workout editor, and deleting history.
@@ -38,7 +36,7 @@ the workout editor, and deleting history.
 - `SportTread/`: iPhone app (Treadmill, Workouts, Coach, History folders; DesignSystem.swift for the look)
 - `SportTreadLiveActivity/`: widget extension for the Lock Screen / Dynamic Island Live Activity
 - `Shared/`: code used by both (Live Activity data)
-- `Tests/LengthTests/`: the length tests run on every build
+- `Tests/LengthTests/`: the length and summary tests run on every build
 - `.github/workflows/build.yml`: macOS build → unsigned IPA
 - `web/treadmill.html`: working Web Bluetooth controller (Chrome/Edge)
 - `design/AppIcon.svg`: app icon source (render with `tools/render_icon.py`)

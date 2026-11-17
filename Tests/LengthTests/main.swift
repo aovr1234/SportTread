@@ -124,6 +124,23 @@ for (text, expected) in parserCases {
     check(LengthParser.request(in: text) == expected, "'\(text)' read as \(String(describing: LengthParser.request(in: text))), expected \(String(describing: expected))")
 }
 
+// 5. Workout summary numbers (hand-worked: 3.0 mph at 2% for 60 s, 170 lb)
+var walkLog = SampleLog()
+for second in stride(from: 0, to: 60, by: 1) { walkLog.add(elapsed: Double(second), mph: 3.0, incline: 2.0) }
+check(walkLog.samples.count == 12, "sample log kept \(walkLog.samples.count) samples, expected 12 (one every 5 s)")
+let walk = WorkoutSummary.make(samples: walkLog.samples, miles: 0.05, movingSeconds: 60, weightLb: 170)
+check(abs(walk.avgMph - 3.0) < 0.001, "average speed \(walk.avgMph), expected 3.0")
+check(walk.paceSeconds == 1200, "pace \(String(describing: walk.paceSeconds)), expected 1200 s per mile (20:00)")
+check(abs(walk.elevationFeet - 5.28) < 0.05, "elevation gain \(walk.elevationFeet) ft, expected 5.28")
+check(walk.calories == 6, "calories \(walk.calories), expected 6")
+check(abs(walk.avgIncline - 2.0) < 0.001 && walk.topIncline == 2.0 && walk.topMph == 3.0, "top and average figures are wrong")
+var longLog = SampleLog()
+for second in stride(from: 0, to: 1500, by: 1) { longLog.add(elapsed: Double(second), mph: 6.0, incline: 0) }
+let run = WorkoutSummary.make(samples: longLog.samples, miles: 2.5, movingSeconds: 1500, weightLb: 170)
+check(run.samples.count <= WorkoutSummary.maxSamples, "chart data not thinned: \(run.samples.count) samples")
+check(run.splits().count == 2 && abs((run.splits().first ?? 0) - 600) <= 20, "mile splits \(run.splits()), expected two near 10:00")
+check(run.elevationFeet == 0 && run.calories > 150, "flat run: elevation \(run.elevationFeet), calories \(run.calories)")
+
 print("\(checks) checks, \(failures.count) failures")
 for failure in failures.prefix(25) { print("FAIL: \(failure)") }
 exit(failures.isEmpty ? 0 : 1)

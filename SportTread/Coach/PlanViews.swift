@@ -1,4 +1,4 @@
-import SwiftUI
+﻿import SwiftUI
 
 /// Coach tab sections: today's readiness and the training plan.
 struct ReadinessSection: View {
@@ -33,7 +33,6 @@ struct ReadinessSection: View {
             Text("From resting heart rate, HRV and sleep that your watch or Oura records in Apple Health (read only). On \"Take it easy\" days the coach makes workouts easy.")
         }
         .listRowBackground(glassRow)
-        .task { if readiness.level == nil { await readiness.refresh() } }
     }
 
     private func color(_ level: Readiness.Level) -> Color {
@@ -50,8 +49,9 @@ struct PlanSection: View {
     @EnvironmentObject private var coach: Coach
     @EnvironmentObject private var readiness: Readiness
     @Binding var created: Workout?
-    @State private var settingUp = false
-    @State private var confirmingEnd = false
+    // Owned by the screen: a sheet or dialog attached to a Section would be attached to every row in it
+    @Binding var settingUp: Bool
+    @Binding var confirmingEnd: Bool
 
     var body: some View {
         Section {
@@ -99,14 +99,10 @@ struct PlanSection: View {
             Text("Plan")
         }
         .listRowBackground(glassRow)
-        .sheet(isPresented: $settingUp) { PlanSetupView() }
-        .confirmationDialog("End this plan?", isPresented: $confirmingEnd, titleVisibility: .visible) {
-            Button("End plan", role: .destructive) { library.setPlan(nil) }
-        }
     }
 }
 
-private struct PlanSetupView: View {
+struct PlanSetupView: View {
     @EnvironmentObject private var library: WorkoutLibrary
     @Environment(\.dismiss) private var dismiss
     @State private var goal = TrainingPlan.Goal.fitter
@@ -117,8 +113,24 @@ private struct PlanSetupView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Picker("Goal", selection: $goal) {
-                    ForEach(TrainingPlan.Goal.allCases) { Text($0.rawValue).tag($0) }
+                Section("Goal") {
+                    ForEach(TrainingPlan.Goal.allCases) { option in
+                        Button {
+                            goal = option
+                        } label: {
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(option.rawValue).font(.headline)
+                                    Text(option.blurb).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: goal == option ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(goal == option ? Theme.lime : .secondary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 Stepper("\(weeks) weeks", value: $weeks, in: 4...12)
                 Stepper("\(perWeek) workouts a week", value: $perWeek, in: 2...5)
@@ -144,3 +156,4 @@ private struct PlanSetupView: View {
         }
     }
 }
+

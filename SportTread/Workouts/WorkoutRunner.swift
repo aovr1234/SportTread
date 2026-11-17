@@ -76,6 +76,8 @@ final class WorkoutRunner: ObservableObject {
     private let activity = WorkoutActivity()
     private var loop: Task<Void, Never>?
     private var beltStartedAt = Date.distantPast
+    private var lastNotedProblem: String?
+    private var sampleLog = SampleLog()
 
     // Deviation detection: what the treadmill should be doing right now
     private var expectedMph = 0.0
@@ -151,6 +153,7 @@ final class WorkoutRunner: ObservableObject {
         lastChange = [:]
         peakMph = 0
         peakIncline = 0
+        sampleLog.reset()
         originalSeconds = workout.totalSeconds
         checkInDue = false
         lastCheckInAt = 0
@@ -183,7 +186,7 @@ final class WorkoutRunner: ObservableObject {
         phase = .starting
         note(.resume, "resumed")
         activity.update(activityState())
-        launch(startBelt: true)
+        launch(startBelt: true, resuming: true)
     }
 
     func skip() {
@@ -363,14 +366,15 @@ final class WorkoutRunner: ObservableObject {
 
     // MARK: Engine
 
-    private func launch(startBelt: Bool) {
+    private func launch(startBelt: Bool, resuming: Bool = false) {
         loop?.cancel()
-        loop = Task { await run(startBelt: startBelt) }
+        loop = Task { await run(startBelt: startBelt, resuming: resuming) }
     }
 
-    private func run(startBelt: Bool) async {
+    private func run(startBelt: Bool, resuming: Bool = false) async {
         if startBelt {
-            treadmill.start(resetStats: false)
+            // A resumed workout skips the extra "speed 1.0"; the step sets its own speed right after
+            treadmill.start(resetStats: false, setSpeed: !resuming)
             beltStartedAt = Date()
             guard await waitUntilRunning() else {
                 if !Task.isCancelled {
@@ -379,6 +383,10 @@ final class WorkoutRunner: ObservableObject {
                 }
                 return
             }
+            // Let the console finish starting before the step's incline and speed go out
+            // (the treadmill checks them against its readings and resends if it dropped them)
+            try? await Task.sleep(for: .seconds(2))
+            if Task.isCancelled { return }
         }
         applyStep()
         phase = .running
@@ -409,11 +417,16 @@ final class WorkoutRunner: ObservableObject {
                 return
             }
 
+            if let problem = treadmill.commandProblem, problem != lastNotedProblem {
+                lastNotedProblem = problem
+                note(.connection, problem)
+            }
             detectConsoleChanges(now: now)
             peakMph = max(peakMph, treadmill.speedMph ?? 0)
             peakIncline = max(peakIncline, treadmill.incline ?? 0)
             stepElapsed += delta
             totalElapsed += delta
+            sampleLog.add(elapsed: totalElapsed, mph: treadmill.speedMph ?? 0, incline: treadmill.incline ?? 0)
             let checkInMinutes = UserDefaults.standard.integer(forKey: Self.checkInKey)
             if checkInMinutes > 0, !checkInDue, offer == nil,
                totalElapsed - lastCheckInAt >= Double(checkInMinutes * 60), !remainingSteps.isEmpty {
@@ -629,7 +642,9 @@ final class WorkoutRunner: ObservableObject {
                 maxMph: reached ? peakMph : workout.maxMph,
                 maxIncline: reached ? peakIncline : workout.maxIncline,
                 completed: reason == "Workout complete", deviations: deviations,
-                originalSeconds: originalSeconds))
+                originalSeconds: originalSeconds,
+                summary: WorkoutSummary.make(samples: sampleLog.samples, miles: treadmill.miles, movingSeconds: Int(totalElapsed),
+                                             weightLb: WorkoutSummary.storedWeightLb)))
         }
     }
 }

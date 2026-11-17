@@ -99,13 +99,16 @@ private struct HistoryDetailView: View {
     var body: some View {
         List {
             Section {
-                HStack(spacing: 10) {
-                    MetricTile(value: "\(entry.seconds / 60)", unit: "minutes", size: 28)
-                    MetricTile(value: String(format: "%.2f", entry.miles), unit: "miles", size: 28)
-                    MetricTile(value: entry.effort.map { "\($0)" } ?? "–", unit: "effort", size: 28)
+                SummaryBlock(entry: entry, others: library.history.filter { $0.id != entry.id }, compact: false)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
+                HStack {
+                    Text("Effort").foregroundStyle(.secondary)
+                    Spacer()
+                    Text(entry.effort.map { "\($0)/10" } ?? "not rated").font(.headline.monospacedDigit())
                 }
                 .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets())
+                .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
             }
             Section("Summary") {
                 LabeledContent("Date", value: entry.date.formatted(date: .complete, time: .shortened))
@@ -122,6 +125,14 @@ private struct HistoryDetailView: View {
                 LabeledContent("Top incline", value: String(format: "%.1f%%", entry.maxIncline))
             }
             .listRowBackground(glassRow)
+            if let splits = entry.summary?.splits(), !splits.isEmpty {
+                Section("Mile splits") {
+                    ForEach(Array(splits.enumerated()), id: \.offset) { index, seconds in
+                        LabeledContent("Mile \(index + 1)", value: WorkoutSummary.paceText(seconds) + " min")
+                    }
+                }
+                .listRowBackground(glassRow)
+            }
             Section("What changed") {
                 if let changes = entry.deviations, !changes.isEmpty {
                     Text(Deviation.summary(changes)).font(.subheadline)

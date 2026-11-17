@@ -91,4 +91,6 @@ struct HistoryEntry: Codable, Identifiable {
     var deviations: [Deviation]? = nil
     /// Length when the workout started; `plannedSeconds` is the length at the end, after live edits
     var originalSeconds: Int? = nil
+    /// Distance, pace, elevation, calories and the chart data (older entries don't have one)
+    var summary: WorkoutSummary? = nil
 }

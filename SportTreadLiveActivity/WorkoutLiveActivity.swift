@@ -1,4 +1,5 @@
 import ActivityKit
+import AppIntents
 import SwiftUI
 import WidgetKit
 
@@ -30,20 +31,23 @@ struct TreadmillLiveActivity: Widget {
                     Text(state.summary ?? (state.stopped ? "Stopped" : "Treadmill")).font(.headline).lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    HStack {
-                        MovingTime(state: state).font(.title3.weight(.heavy).monospacedDigit())
-                        Spacer()
-                        Text(String(format: "%.2f mi", state.miles)).font(.title3.weight(.bold).monospacedDigit())
+                    VStack(spacing: 8) {
+                        HStack {
+                            MovingTime(state: state).font(.title3.weight(.heavy).monospacedDigit())
+                            Spacer()
+                            Text(String(format: "%.2f mi", state.miles)).font(.title3.weight(.bold).monospacedDigit())
+                        }
+                        if state.summary == nil { ControlButtons(paused: nil) }
                     }
                 }
             } compactLeading: {
-                Image(systemName: state.stopped ? "pause.fill" : "figure.run").foregroundStyle(volt)
+                Image(systemName: figureSymbol(mph: state.mph, incline: state.incline)).foregroundStyle(volt)
             } compactTrailing: {
                 Text(String(format: "%.1f", state.mph))
                     .font(.caption.weight(.bold).monospacedDigit())
                     .foregroundStyle(volt)
             } minimal: {
-                Image(systemName: state.stopped ? "pause.fill" : "figure.run").foregroundStyle(volt)
+                Image(systemName: figureSymbol(mph: state.mph, incline: state.incline)).foregroundStyle(volt)
             }
             .keylineTint(volt)
         }
@@ -56,7 +60,7 @@ private struct TreadmillLockScreen: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Image(systemName: "figure.run").foregroundStyle(volt)
+                Image(systemName: figureSymbol(mph: state.mph, incline: state.incline)).foregroundStyle(volt)
                 Text("Treadmill").font(.headline)
                 Spacer()
                 Text(state.summary ?? (state.stopped ? "Stopped" : "Running"))
@@ -72,6 +76,7 @@ private struct TreadmillLockScreen: View {
                 }
                 Metric(value: String(format: "%.2f", state.miles), unit: "miles")
             }
+            if state.summary == nil { ControlButtons(paused: nil) }
         }
         .padding()
     }
@@ -115,16 +120,17 @@ struct WorkoutLiveActivity: Widget {
                     VStack(spacing: 6) {
                         Countdown(state: state).font(.title2.weight(.heavy).monospacedDigit())
                         ProgressView(value: state.progress).tint(volt)
+                        if state.finished == nil { ControlButtons(paused: state.paused) }
                     }
                 }
             } compactLeading: {
-                Image(systemName: state.paused ? "pause.fill" : "figure.run").foregroundStyle(volt)
+                Image(systemName: state.paused ? "pause.fill" : figureSymbol(mph: state.mph, incline: state.incline)).foregroundStyle(volt)
             } compactTrailing: {
                 Countdown(state: state)
                     .font(.caption.weight(.bold).monospacedDigit())
                     .frame(maxWidth: 48)
             } minimal: {
-                Image(systemName: state.paused ? "pause.fill" : "figure.run").foregroundStyle(volt)
+                Image(systemName: state.paused ? "pause.fill" : figureSymbol(mph: state.mph, incline: state.incline)).foregroundStyle(volt)
             }
             .keylineTint(volt)
         }
@@ -138,7 +144,7 @@ private struct LockScreenView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Image(systemName: "figure.run").foregroundStyle(volt)
+                Image(systemName: state.paused ? "figure.stand" : figureSymbol(mph: state.mph, incline: state.incline)).foregroundStyle(volt)
                 Text(attributes.workoutName).font(.headline).lineLimit(1)
                 Spacer()
                 if state.finished == nil {
@@ -160,6 +166,7 @@ private struct LockScreenView: View {
                 if let next = state.nextLabel {
                     Text("Next: \(next)").font(.caption).foregroundStyle(.secondary)
                 }
+                ControlButtons(paused: state.paused)
             }
         }
         .padding()
@@ -177,6 +184,41 @@ private struct Countdown: View {
             Text(timerInterval: Date.now...max(Date.now, state.stepEnds), countsDown: true)
                 .multilineTextAlignment(.trailing)
         }
+    }
+}
+
+/// The figure follows the pace and the slope: standing when stopped, walking, running from 4 mph,
+/// hiking on a steep incline (5% and up) at walking pace. Updates arrive with speed and incline changes.
+private func figureSymbol(mph: Double, incline: Double) -> String {
+    if mph < 0.1 { return "figure.stand" }
+    if mph >= 4.0 { return "figure.run" }
+    return incline >= 5 ? "figure.hiking" : "figure.walk"
+}
+
+/// Speed -/+, pause or resume (workouts only) and STOP. They run inside the app, so the app must still be
+/// alive in the background (it is, while connected to the treadmill).
+private struct ControlButtons: View {
+    /// nil = no pause button (treadmill mode); otherwise whether the workout is paused
+    let paused: Bool?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(intent: LiveSpeedDownIntent()) { label("minus") }
+            Button(intent: LiveSpeedUpIntent()) { label("plus") }
+            if let paused {
+                Button(intent: LivePauseResumeIntent()) { label(paused ? "play.fill" : "pause.fill") }
+            }
+            Button(intent: LiveStopIntent()) { label("stop.fill", tint: .red) }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func label(_ symbol: String, tint: Color = .white) -> some View {
+        Image(systemName: symbol)
+            .font(.subheadline.weight(.bold))
+            .foregroundStyle(tint)
+            .frame(maxWidth: .infinity, minHeight: 32)
+            .background(Color.white.opacity(0.15), in: Capsule())
     }
 }
 

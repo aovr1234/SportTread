@@ -1,4 +1,4 @@
-import Foundation
+﻿import Foundation
 
 /// A simple multi-week plan: N workouts a week for M weeks, progressing week by week.
 /// The schedule is rule-based; each session is turned into a workout by the coach when the user
@@ -11,6 +11,16 @@ struct TrainingPlan: Codable, Equatable {
         case fiveK = "Walk-jog a 5K"
 
         var id: String { rawValue }
+
+        /// One line shown under the goal when starting a plan
+        var blurb: String {
+            switch self {
+            case .fitter: "A mix of walks, hills and intervals for all-round fitness"
+            case .endurance: "Longer, steady sessions with some intervals to build stamina"
+            case .weight: "Walks and hills that burn the most calories at an easy effort"
+            case .fiveK: "Intervals, walks and jogging that build up to a 5K"
+            }
+        }
 
         /// Workout types rotated through each week
         var rotation: [WorkoutRequest.Kind] {
@@ -66,3 +76,4 @@ struct TrainingPlan: Codable, Equatable {
         return request
     }
 }
+

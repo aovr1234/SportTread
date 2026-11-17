@@ -30,6 +30,8 @@ final class TreadmillController: NSObject, ObservableObject {
     @Published private(set) var movingSeconds: TimeInterval = 0
     @Published private(set) var miles: Double = 0
     @Published private(set) var lastEvent = ""
+    /// Set when a speed or incline command still didn't take after resending; shown on the workout screen
+    @Published private(set) var commandProblem: String?
 
     var isReady: Bool { state == .ready }
     var isRunning: Bool { (speedMph ?? 0) > 0 }
@@ -38,6 +40,9 @@ final class TreadmillController: NSObject, ObservableObject {
     @Published private(set) var sessionActive = false
     /// Summary of the last ended treadmill-mode session, shown on the Treadmill tab
     @Published private(set) var lastSessionSummary: String?
+    /// The history entry of the last ended treadmill-mode session (with its full summary); the Treadmill tab shows it
+    @Published var lastSessionEntry: HistoryEntry?
+    private var sessionLog = SampleLog()
 
     /// Set by the workout runner while a workout runs; treadmill-mode tracking pauses meanwhile.
     var workoutActive = false {
@@ -57,6 +62,18 @@ final class TreadmillController: NSObject, ObservableObject {
         let notBefore: Date
     }
 
+    /// A speed or incline the app wants, kept until the treadmill's readings confirm it.
+    /// The console sometimes accepts an incline and then drops it (seen after Start, with no refusal),
+    /// so a command whose reading falls back to the old value is sent again (up to 3 more times).
+    private struct Want {
+        var value: Double
+        var sends = 0
+        var sentAt = Date.distantFuture
+        /// The reading when the command first went out; a reading that falls back to it means it didn't take
+        var before = 0.0
+        var watchUntil = Date.distantFuture
+    }
+
     private let service = CBUUID(string: TreadmillProtocol.serviceUUID)
     private let txID = CBUUID(string: TreadmillProtocol.txUUID)
     private let rxID = CBUUID(string: TreadmillProtocol.rxUUID)
@@ -66,6 +83,15 @@ final class TreadmillController: NSObject, ObservableObject {
     private var tx: CBCharacteristic?
     private var session: Task<Void, Never>?
     private var queue: [Job] = []
+    // Speed and incline: at most one send per second each (the latest value wins), one command per poll message
+    private var pendingSpeed: Double?
+    private var pendingIncline: Double?
+    private var wantSpeed: Want?
+    private var wantIncline: Want?
+    private var lastSpeedSend = Date.distantPast
+    private var lastInclineSend = Date.distantPast
+    private var startedAt = Date.distantPast
+    private static let cooldown: TimeInterval = 1
     private var pendingWrite: CheckedContinuation<Void, Never>?
     private var pendingWriteID = 0
     private var lastStatusAt: Date?
@@ -153,7 +179,7 @@ final class TreadmillController: NSObject, ObservableObject {
         session?.cancel()
         session = nil
         finishWrite(id: pendingWriteID)
-        queue.removeAll()
+        clearCommands()
         tx = nil
         speedMph = nil
         incline = nil
@@ -163,13 +189,29 @@ final class TreadmillController: NSObject, ObservableObject {
 
     // MARK: Commands
 
-    /// Starts the belt at 1.0 mph. `resetStats: false` keeps time and distance (resuming a workout).
-    func start(resetStats: Bool = true) {
+    /// Drops everything waiting to be sent, and stops checking earlier commands.
+    private func clearCommands() {
+        queue.removeAll()
+        pendingSpeed = nil
+        pendingIncline = nil
+        wantSpeed = nil
+        wantIncline = nil
+    }
+
+    /// Starts the belt (the console starts at 1.0 mph). `resetStats: false` keeps time and distance
+    /// (resuming a workout); `setSpeed: false` skips the extra "speed 1.0" command, which a resumed
+    /// workout doesn't need because it sets its own speed next.
+    func start(resetStats: Bool = true, setSpeed: Bool = true) {
         guard isReady else { return }
         if resetStats { self.resetStats() }
+        clearCommands()
+        commandProblem = nil
+        startedAt = Date()
         targetMph = (1.0, Date())
         enqueue("Start", TreadmillProtocol.startFrames)
-        enqueue("Speed 1.0 mph", TreadmillProtocol.speedFrames(mph: 1.0), after: 1.5)
+        if setSpeed {
+            enqueue("Speed 1.0 mph", TreadmillProtocol.speedFrames(mph: 1.0), after: 1.5)
+        }
     }
 
     /// Treadmill mode: stops the belt, then lowers the incline to 0% two seconds later, saves the
@@ -184,7 +226,8 @@ final class TreadmillController: NSObject, ObservableObject {
     /// deck after the belt has stopped, but not if Stop arrives right after the incline command.)
     func zeroInclineAndStop() {
         guard isReady else { return }
-        queue.removeAll()
+        clearCommands()
+        commandProblem = nil
         targetMph = nil
         targetIncline = (0, Date().addingTimeInterval(2))
         enqueue("Stop", TreadmillProtocol.stopFrames)
@@ -194,7 +237,7 @@ final class TreadmillController: NSObject, ObservableObject {
     /// Stops the belt; drops anything still queued.
     func stop() {
         guard isReady else { return }
-        queue.removeAll()
+        clearCommands()
         targetMph = nil
         enqueue("Stop", TreadmillProtocol.stopFrames)
     }
@@ -210,8 +253,13 @@ final class TreadmillController: NSObject, ObservableObject {
             return
         }
         targetMph = (value, Date())
-        enqueue(String(format: "Speed %.1f mph", value), TreadmillProtocol.speedFrames(mph: value))
+        commandProblem = nil
+        pendingSpeed = value  // sent at the next poll gap, at most once a second; a newer tap replaces it
+        wantSpeed = Want(value: value)
     }
+
+    /// The speed the belt is set to (the last command if it is recent, else the reading).
+    var targetSpeedNow: Double { current(targetMph, reading: speedMph) }
 
     func changeSpeed(by delta: Double) {
         setSpeed(current(targetMph, reading: speedMph) + delta)
@@ -224,7 +272,9 @@ final class TreadmillController: NSObject, ObservableObject {
             return
         }
         targetIncline = (value, Date())
-        enqueue(String(format: "Incline %.1f%%", value), TreadmillProtocol.inclineFrames(percent: value))
+        commandProblem = nil
+        pendingIncline = value
+        wantIncline = Want(value: value)
     }
 
     func changeIncline(by delta: Double) {
@@ -243,6 +293,7 @@ final class TreadmillController: NSObject, ObservableObject {
     func resetStats() {
         movingSeconds = 0
         miles = 0
+        sessionLog.reset()
         sessionMaxMph = 0
         sessionMaxIncline = 0
     }
@@ -267,6 +318,7 @@ final class TreadmillController: NSObject, ObservableObject {
             }
             sessionMaxMph = max(sessionMaxMph, speedMph ?? 0)
             sessionMaxIncline = max(sessionMaxIncline, incline ?? 0)
+            sessionLog.add(elapsed: movingSeconds, mph: speedMph ?? 0, incline: incline ?? 0)
             if manualActivity.isActive {
                 manualActivity.update(manualState(now: now, stopped: false))
             } else {
@@ -291,9 +343,13 @@ final class TreadmillController: NSObject, ObservableObject {
         let s = Int(movingSeconds)
         lastSessionSummary = String(format: "%d:%02d · %.2f mi · top %.1f mph", s / 60, s % 60, miles, sessionMaxMph)
         if movingSeconds >= 30 {
-            onSessionEnd?(HistoryEntry(
+            let summary = WorkoutSummary.make(samples: sessionLog.samples, miles: miles, movingSeconds: s,
+                                              weightLb: WorkoutSummary.storedWeightLb)
+            let entry = HistoryEntry(
                 date: now, name: "Treadmill session", plannedSeconds: 0, seconds: s, miles: miles,
-                maxMph: sessionMaxMph, maxIncline: sessionMaxIncline, completed: true))
+                maxMph: sessionMaxMph, maxIncline: sessionMaxIncline, completed: true, summary: summary)
+            onSessionEnd?(entry)
+            lastSessionEntry = entry
         }
     }
 
@@ -321,20 +377,92 @@ final class TreadmillController: NSObject, ObservableObject {
                     central?.cancelPeripheralConnection(peripheral)
                     return
                 }
-                if index % 3 == 0, let job = queue.first, Date() >= job.notBefore {
-                    queue.removeFirst()
+                // One command per poll message: a command goes out only between two poll messages, and
+                // is followed by a full poll message, so quick taps can never starve the status polling.
+                if index % 3 == 0, let job = takeNextJob(now: Date()) {
                     lastEvent = job.label
                     for frame in job.frames {
                         await write(frame)
                         try? await Task.sleep(for: .milliseconds(200))
                     }
-                    continue
                 }
                 await write(TreadmillProtocol.pollFrames[index % TreadmillProtocol.pollFrames.count])
                 index += 1
                 try? await Task.sleep(for: .milliseconds(200))
             }
         }
+    }
+
+    /// The next command to send: a queued job that is due (Stop and Start first, even if an earlier job
+    /// isn't due yet), then the latest speed, then the latest incline, each at most once a second.
+    private func takeNextJob(now: Date) -> Job? {
+        if let i = queue.firstIndex(where: { now >= $0.notBefore }) {
+            return queue.remove(at: i)
+        }
+        if let mph = pendingSpeed, now.timeIntervalSince(lastSpeedSend) >= Self.cooldown {
+            pendingSpeed = nil
+            lastSpeedSend = now
+            if var want = wantSpeed, abs(want.value - mph) < 0.001 {
+                if want.sends == 0 { want.before = speedMph ?? 0 }
+                want.sends += 1
+                want.sentAt = now
+                want.watchUntil = max(now.addingTimeInterval(8), startedAt.addingTimeInterval(12))
+                wantSpeed = want
+            }
+            return Job(label: String(format: "Speed %.1f mph", mph), frames: TreadmillProtocol.speedFrames(mph: mph), notBefore: now)
+        }
+        if let percent = pendingIncline, now.timeIntervalSince(lastInclineSend) >= Self.cooldown {
+            pendingIncline = nil
+            lastInclineSend = now
+            if var want = wantIncline, abs(want.value - percent) < 0.001 {
+                if want.sends == 0 { want.before = incline ?? 0 }
+                want.sends += 1
+                want.sentAt = now
+                want.watchUntil = max(now.addingTimeInterval(8), startedAt.addingTimeInterval(12))
+                wantIncline = want
+            }
+            return Job(label: String(format: "Incline %.1f%%", percent), frames: TreadmillProtocol.inclineFrames(percent: percent), notBefore: now)
+        }
+        return nil
+    }
+
+    /// Compares the readings with what was commanded. A reading that went back to the value from before
+    /// the command means the console dropped it, so the command is sent again (up to 3 more times).
+    /// A reading that moved somewhere else is a change made on the console and is left alone.
+    private func verifyCommands(now: Date) {
+        if let want = wantSpeed, want.sentAt != .distantFuture {
+            let reading = speedMph ?? 0
+            if now > want.watchUntil {
+                wantSpeed = nil
+            } else if pendingSpeed == nil, reading > 0, now.timeIntervalSince(want.sentAt) >= 3,
+                      abs(reading - want.value) >= 0.15, abs(reading - want.before) < 0.1 {
+                resend(speed: true, want: want)
+            }
+        }
+        if let want = wantIncline, want.sentAt != .distantFuture {
+            let reading = incline ?? 0
+            if now > want.watchUntil {
+                wantIncline = nil
+            } else if pendingIncline == nil, now.timeIntervalSince(want.sentAt) >= 2.5,
+                      abs(reading - want.value) >= 0.25, abs(reading - want.before) < 0.25 {
+                resend(speed: false, want: want)
+            }
+        }
+    }
+
+    private func resend(speed: Bool, want: Want) {
+        if want.sends >= 4 {
+            if speed {
+                wantSpeed = nil
+                commandProblem = "Speed didn't take. Tap ▲ or ▼ to try again."
+            } else {
+                wantIncline = nil
+                commandProblem = "Incline didn't take. Tap ▲ or ▼ to try again."
+            }
+            lastEvent = commandProblem ?? ""
+            return
+        }
+        if speed { pendingSpeed = want.value } else { pendingIncline = want.value }
     }
 
     /// Write with response; continues on the console's acknowledgement or after 1 s.
@@ -364,6 +492,10 @@ final class TreadmillController: NSObject, ObservableObject {
         guard state == .ready else { return }  // handshake replies aren't status frames
         if let code = TreadmillProtocol.refusal(from: data) {
             lastEvent = "Treadmill refused a command (status \(String(format: "%02x", code)))"
+            // A refusal right after a speed or incline command: send that command again
+            let now = Date()
+            if let want = wantSpeed, pendingSpeed == nil, now.timeIntervalSince(want.sentAt) < 3 { resend(speed: true, want: want) }
+            if let want = wantIncline, pendingIncline == nil, now.timeIntervalSince(want.sentAt) < 3 { resend(speed: false, want: want) }
             return
         }
         guard let status = TreadmillProtocol.status(from: data) else { return }
@@ -387,6 +519,7 @@ final class TreadmillController: NSObject, ObservableObject {
         lastStatusAt = now
         speedMph = mph
         incline = status.incline
+        verifyCommands(now: now)
         updateManualSession(now: now)
     }
 }

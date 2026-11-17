@@ -18,6 +18,30 @@ struct SportTreadApp: App {
         let library = WorkoutLibrary(dataFolder: dataFolder)
         runner.onFinish = { [weak library] entry in library?.record(entry) }
         treadmill.onSessionEnd = { [weak library] entry in library?.record(entry) }
+        // Live Activity buttons (speed -/+, pause/resume, STOP) run in this process
+        LiveControl.handler = { [weak treadmill, weak runner] command in
+            guard let treadmill, let runner else { return }
+            switch command {
+            case .speedUp, .speedDown:
+                let target = ((treadmill.targetSpeedNow + (command == .speedUp ? 0.5 : -0.5)) * 10).rounded() / 10
+                let value = min(max(target, TreadmillController.minMph), TreadmillController.maxMph)
+                if runner.isActive { runner.adjustSpeed(to: value) } else { treadmill.setSpeed(value) }
+            case .pauseResume:
+                if case .paused = runner.phase {
+                    runner.resume()
+                } else if runner.isActive {
+                    runner.pause()
+                } else if treadmill.isRunning {
+                    treadmill.stop()
+                }
+            case .stop:
+                if runner.isActive {
+                    runner.pause(reason: "Stopped. Resume, or End workout to finish.")
+                } else {
+                    treadmill.stop()
+                }
+            }
+        }
         _treadmill = StateObject(wrappedValue: treadmill)
         _runner = StateObject(wrappedValue: runner)
         _dataFolder = StateObject(wrappedValue: dataFolder)

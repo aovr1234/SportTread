@@ -51,6 +51,9 @@ struct TreadmillView: View {
             .onChange(of: treadmill.lastSessionSummary) { _, summary in
                 if let summary, !treadmill.sessionActive { show("Session saved: \(summary)", seconds: 6) }
             }
+            .sheet(item: $treadmill.lastSessionEntry) { entry in
+                SessionSummarySheet(entry: entry)
+            }
             .onChange(of: treadmill.isReady) { _, ready in
                 UIApplication.shared.isIdleTimerDisabled = ready  // keep the screen on while connected
                 if !ready { cancelCountdown() }

@@ -1,4 +1,4 @@
-import SwiftUI
+﻿import SwiftUI
 
 /// Coach tab: pick how long (and optionally type, intensity, a note); the coach creates the workout.
 struct CreateWorkoutView: View {
@@ -9,6 +9,8 @@ struct CreateWorkoutView: View {
     @State private var lengthFromNote: String?
     @AppStorage(WorkoutRunner.checkInKey) private var checkInMinutes = 0
     @State private var created: Workout?
+    @State private var settingUpPlan = false
+    @State private var confirmingEndPlan = false
 
     private let quickMinutes = [15, 20, 30, 45, 60]
 
@@ -16,7 +18,7 @@ struct CreateWorkoutView: View {
         NavigationStack {
             Form {
                 ReadinessSection()
-                PlanSection(created: $created)
+                PlanSection(created: $created, settingUp: $settingUpPlan, confirmingEnd: $confirmingEndPlan)
 
                 Section("How long?") {
                     HStack(spacing: 8) {
@@ -90,6 +92,11 @@ struct CreateWorkoutView: View {
             .listRowBackground(glassRow)
             .sportList()
             .navigationTitle("Coach")
+            .task { if readiness.level == nil { await readiness.refresh() } }
+            .sheet(isPresented: $settingUpPlan) { PlanSetupView() }
+            .confirmationDialog("End this plan?", isPresented: $confirmingEndPlan, titleVisibility: .visible) {
+                Button("End plan", role: .destructive) { library.setPlan(nil) }
+            }
             .navigationDestination(item: $created) { workout in
                 WorkoutDetailView(workout: workout, isNew: true)
             }
@@ -114,3 +121,4 @@ struct CreateWorkoutView: View {
         .buttonStyle(.plain)
     }
 }
+

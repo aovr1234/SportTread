@@ -1,6 +1,6 @@
 # Andrew's SportTread: Plan
 
-Status: 0.7.1 (fixes and no-scroll screens) built 2026-11-11, testing; milestones 0, 1, 2 passed (2026-11-09); milestone 5 (AI coach) passed, Live Activity works; connection reliability built, testing; milestone 3 waits for the HR sensor; milestone 4 next. Last updated 2026-11-01.
+Status: 0.7.2 (fixes 10-15: command pacing, plan goal picker, workout summary, Live Activity buttons and figure, resume reliability) built 2026-11-17, untested; 0.7.1 built 2026-11-11; milestones 0, 1, 2 passed (2026-11-09); milestone 5 (AI coach) passed, Live Activity works; connection reliability built, testing; milestone 3 waits for the HR sensor; milestone 4 next. Last updated 2026-11-01.
 
 ## Name
 - App name: **Andrew's SportTread** (in-app title, splash, settings, Health source name).
@@ -21,12 +21,21 @@ Status: 0.7.1 (fixes and no-scroll screens) built 2026-11-11, testing; milestone
   - A 3-2-1 countdown before the belt starts.
 - **Live charts:** HR vs target line, speed/incline area chart (Swift Charts), on the live screen and in history.
 - **Lock screen and Dynamic Island:** a Live Activity during workouts (built 2026-11): step, countdown, speed, incline, progress, next step; HR added with the sensor. Runs in a widget extension, which Signulous must sign.
-  - **Treadmill mode** (manual use, no workout; planned, not built): its own Live Activity.
+  - **Treadmill mode** (manual use, no workout; built in 0.7): its own Live Activity.
     - **Shows:** speed, incline, moving time (counting up on its own), distance; HR once the sensor arrives.
     - **Starts and ends:** starts when the belt starts. A stop shows "Stopped", and it ends after **2 minutes** stopped (or on End workout / Disconnect), with a summary (time, distance) for a minute.
     - **Dynamic Island:** compact shows a runner icon and the current speed; long-press shows speed, incline, time and distance.
     - **Workouts:** starting a workout replaces it with the workout Live Activity (only one at a time).
     - **Updates:** same rate limits as workouts (changes at once, readings every 3 s, a refresh every 60 s).
+  - **Interactive buttons** (requested 2026-11-17; built in 0.7.2, untested: speed -/+ 0.5 mph, pause/resume (workouts), STOP): tappable buttons on both Live Activities, using App Intents (`LiveActivityIntent`) that run inside the app, so they reach the live treadmill connection (kept alive by the background mode).
+    - **Buttons:** workout: − and + speed, Pause / Resume, STOP. Treadmill mode: − and + speed, STOP. Skip and incline stay in the app.
+    - **Where:** the Lock Screen card (about four buttons) and the expanded Dynamic Island (about two). The compact and minimal Island only open the app. No sliders: buttons and toggles only.
+    - **Speed step:** ±0.5 mph on the Lock Screen (small steps are fiddly there); 0.1 like the in-app tiles is the alternative, to be confirmed.
+    - **Locked phone:** Pause and STOP work without unlocking (the safe direction); the speed buttons need the phone unlocked, so a pocket tap can't speed you up.
+    - **Feedback:** each press updates the card at once with the new speed or "Paused".
+    - **Depends on fix 10 (command cooldown):** speed presses go through the same throttle as the in-app tiles, so rapid taps are merged instead of flooding the treadmill.
+    - **Risks:** buttons that run code in the app are untested under Signulous signing (the Live Activity itself works); if the app is swiped away the treadmill connection is gone and the buttons do nothing. The intents live in `Shared/` so the app and the widget extension both compile them.
+    - Effort: about a day.
 - **App icon:** a stylised treadmill belt forming a pulse line, volt green on black.
 
 ## Goal
@@ -61,6 +70,23 @@ Verified on the user's treadmill, 2026-11-01:
 - **Workouts during a drop:** the workout pauses with "Reconnecting…"; when the link is back it continues by itself if the belt kept running, or waits for Resume if the belt stopped.
 - **Clear UI:** wherever the treadmill is needed but not connected, the app says "Treadmill disconnected" and shows a Connect button (no greyed-out buttons).
 - The console Stop button and the safety key always work, connected or not.
+- **Command pacing** (built in 0.7.2, untested; found 2026-11-17: tapping speed down in bulk timed the connection out):
+  - Root cause: each tap queued its own command, and the session loop ran queued commands back to back without sending any status poll in between. About 25 queued commands take ~14 s, longer than the 10-second silence watchdog, so the app reset the connection.
+  - **Cooldown:** speed and incline each send at most one command per second. The first tap goes out at once; taps during the cooldown only update the target, and the latest value is sent when the cooldown ends. (5.0 → 2.5 mph in 25 taps over 4 s sends about 5 commands, the last one within a second of the final tap.)
+  - **Merge:** a new speed (or incline) command replaces one of the same kind still waiting in the queue.
+  - **Never starve polling:** at most one command per poll message, so status replies keep arriving.
+  - **Safe on stop:** a delayed command is dropped if the belt has stopped, on STOP, End workout, and disconnect. The tiles still show the target at once (green) until the treadmill reports it.
+- **Resume reliability** (built in 0.7.2, untested; reported 2026-11-17: sometimes the incline doesn't execute after a workout is resumed):
+  - **What Resume does today:** it sends the Start sequence (5 frames) and an extra "speed 1.0 mph" 1.5 s later, then as soon as the belt reports moving it queues the step's incline and speed. All of that goes out back to back with no status polls in between (about 3 s of silence), and a command that isn't due yet holds up the ones behind it. Nothing checks that the incline arrived, and a refusal (status 04) only shows as a toast on the Treadmill tab, never during a workout.
+  - **Reproduced 2026-11-17 on the treadmill (PC copy of the app's exact queue):** a first start with the incline sent 6 s after Start worked (1.0%). After pause then Resume, the incline was sent ~1.5 s after Start: the console echoed 3.0% once, then went back to 0.0% and stayed there. No refusal (status 04) came back, so the console accepted the command and then wiped it. Cause: Start resets the incline to 0%, and it does so a few seconds after the Start frames, which erases any incline sent too early.
+  - **Timing test 2026-11-17 (incline sent 2, 3, 4, 5, 6 s after Start, 2%):** 2 to 5 s held; 6 s was wiped back to 0.0% (and the earlier 1.5 s case was wiped too). So there is no clean safe delay: the console sometimes drops the incline, with no refusal. The only reliable cure is checking the reading and resending, so step 3 below is the key part.
+  - **Fix:**
+    1. Resume doesn't send the redundant "speed 1.0".
+    2. After Start, wait until the belt reports moving plus a short settle (a fixed wait alone does not fix it: see the timing test above); then the incline first (the motor is slow), the speed 1 s later; one command per poll message (fix 10).
+    3. Each speed and incline command is checked against the treadmill's next readings (the incline reading follows a commanded value within about 2 s) and resent up to 3 times; a "refused" reply also triggers a retry.
+    4. If it still fails, the workout screen says so ("Incline didn't take. Tap ▲ to retry") and the deviation notes record it.
+    5. A command that isn't due yet no longer blocks later ones.
+  - **To check first:** a PC test of pause then resume that logs refusals and the incline reading.
 
 ### 2. Heart rate (optional add-on, deferred until the Bluetooth sensor arrives)
 Removed from the app for now (2026-11). The Bluetooth monitor code is in git history (commit 12afdc8, `HeartRateMonitor.swift`) and comes back when the sensor arrives.
@@ -244,6 +270,40 @@ Both session screens fit on one phone screen with no scrolling. Each thing appea
 - **Start has a cancellable 3-2-1 countdown** in the same spot as STOP, so a double-tap on STOP can't restart the belt.
 - Everything is sized to fit one screen, including smaller iPhones (numbers scale down; nothing scrolls).
 
+### 8c. Workout summary (requested 2026-11-17; built in 0.7.2, untested)
+**As built in 0.7.2:** distance, time, average speed, pace, elevation gain, calories (estimate from a body weight set in Setup, not read from Health), average incline, a speed and incline chart, comparison with the last session of the same name and personal-best badges, on the finished workout screen, in a sheet after a treadmill session, and in History (plus mile splits). The 5-second samples (thinned to at most 120) are stored inside each history entry, not in a separate file. **Not built yet:** the Apple Intelligence debrief, the per-step table, reading body weight from Health, heart rate.
+Shown when a workout or a treadmill-mode session ends, and again in History (the full version).
+- **Finished screen** (one screen, no scrolling): distance as the hero number; six tiles; a small speed and incline chart; the effort rating; Done.
+- **Numbers and how they're worked out** (all by code from the treadmill's readings, sampled every 5 s):
+  - **Distance:** belt speed added up over time (what the treadmill reports).
+  - **Time:** moving time as the main figure; total time including pauses beside it when they differ.
+  - **Average speed and pace:** distance ÷ moving time, with pace in min per mile.
+  - **Top speed, average incline, top incline** actually reached (not the plan's).
+  - **Elevation gain:** for each sample, distance × incline %, added up (in feet). It comes from the incline setting, so it's the climb you simulated.
+  - **Calories (estimate):** the ACSM walking/running equations from speed, incline and body weight, shown as "~200 kcal (estimate)", typically within about 15%. Body weight is read from Apple Health (a new read permission for body mass); if it's missing, Setup asks for it once.
+  - **Plan vs actual:** steps completed, planned vs actual length, and how many changes you made (from the deviation notes).
+  - **Heart rate** (when the sensor is in): average, top, and time in each zone.
+  - **Compared with last time:** against your previous similar workout (faster, farther, longer) and personal bests (longest, farthest, fastest average), all computed by code. Apple Intelligence writes a two-sentence debrief from those facts; it never supplies the numbers.
+- **History detail** adds per-mile splits, a table per step (time, average speed, incline, distance), the chart, and the deviation notes.
+- **Stored:** the totals in the history entry, and the 5-second samples in one small file per session in the data folder (`history/<id>.json`), so history.json stays small and backups carry everything.
+- **Not shown:** steps (the treadmill has no step sensor).
+- **Apple Health** (still on hold): when saving is built, distance, elevation, calories and speed samples come from the same numbers.
+
+### 8d. Live runner (requested 2026-11-17; Live Activity figure built in 0.7.2, untested; the rest deferred)
+A stick figure that matches the treadmill.
+- **Scope decided 2026-11-17: no motion for now.** Only the dynamic Live Activity icon (below) is planned. The animated in-app runner and the flip-book experiment are deferred; they stay here as ideas for later.
+- **Limit:** iOS draws a Live Activity outside the app and doesn't play continuous animation there. Only a few things tick by themselves (the timer text and a timer-driven progress bar), and a view changes when the app sends an update, which the system rate-limits. So a smoothly running figure on the Lock Screen isn't possible; the two parts below are.
+- **Deferred: in the app (smooth, real animation):** a slim strip (about 60 pt) on the Treadmill and Workout screens: a stick figure on a belt whose marks move at the belt speed.
+  - Walking gait below about 4 mph; above that a run, with a flight phase and a forward lean.
+  - Stride rate rises with speed (about 1.1 strides per second at 3 mph, 1.4 at 6 mph). The ground tilts with the incline. At 0 mph the figure stands and breathes.
+  - Drawn with Canvas and a 60 fps timeline from the live speed and incline: low battery cost. A switch in Setup turns it off, and Reduce Motion turns it off too.
+- **Planned: Live Activity (Lock Screen and Dynamic Island):** the figure changes with pace and slope whenever an update arrives (already sent on speed changes):
+  - stopped (standing), walking, running, and hiking when the incline is steep (about 5% and up);
+  - bands (adjustable): stopped under 0.1 mph, walking up to 3.9 mph, running from 4.0 mph;
+  - SF Symbols: `figure.stand`, `figure.walk`, `figure.run`, `figure.hiking`. A wrong symbol name only shows as a blank at runtime, so the names get checked on the phone first.
+- **Deferred experiment, only if wanted later:** a one-frame-per-second flip-book on the Lock Screen: a custom font whose digits are stick-figure poses, shown through the timer text that ticks by itself. It moves without any updates, but only at 1 frame per second, and it's a hack that an iOS update could break.
+- Effort: the Live Activity icons a couple of hours (the in-app runner, deferred, about a day).
+
 ## Build and install (no Mac)
 - Project kept as text in a GitHub repo (XcodeGen or similar).
 - GitHub Actions macOS runner builds an unsigned `.ipa` on every push.
@@ -269,7 +329,7 @@ Scope agreed 2026-11 after the first field test. **Built 2026-11-10** (plus dele
 **On hold:** saving workouts to Apple Health (milestone 4) and everything heart-rate (milestone 3, waits for the sensor).
 
 ## Fixes build (0.7.1): fixes from the field tests
-All collected from the user's real runs (2026-11). **Built 2026-11-11 as 0.7.1** (rows 1–9), testing. The proposals below the table were not included. Details are in the sections named in each row.
+All collected from the user's real runs (2026-11). **Built 2026-11-11 as 0.7.1** (rows 1–9), testing; rows 10–15 built 2026-11-17 as 0.7.2. The proposals below the table were not included. Details are in the sections named in each row.
 
 | # | Fix | Why it's needed | Details |
 |---|---|---|---|
@@ -281,6 +341,12 @@ All collected from the user's real runs (2026-11). **Built 2026-11-11 as 0.7.1**
 | 6 | **STOP shows only while the belt runs** | A STOP button on a stopped treadmill | §3 |
 | 7 | **History:** original planned length plus the final one; top speed and incline actually reached; length changes logged with before/after totals; rapid taps on one tile merged into one entry | Four incline taps were logged as four changes; History showed the plan's values | §7 |
 | 9 | **No-scroll Treadmill and Workout screens** (one set of controls, one bottom bar, coach in a sheet, overlays for check-ins) | The screens were cluttered and needed scrolling mid-session | §8b |
+| 10 | **[built 0.7.2]** **Command cooldown:** speed and incline commands go out at most once a second each (the first at once, then the latest value after the cooldown); queued commands of the same kind are merged; a status poll goes out between commands; a delayed command is dropped on STOP or disconnect | 25 quick taps (5.0 → 2.5 mph) queued 25 commands that ran back to back for about 14 s with no polling, so the 10-second watchdog reset the connection | §1 |
+| 11 | **[built 0.7.2]** **Plan setup, goal picker:** the setup sheet and the End plan dialog move off the list Section onto the screen itself (the Readiness load too), and the four goals become selectable rows with a one-line description each | The Goal picker on "Start a plan" doesn't work (the user confirmed: the menu opens and then vanishes, or the sheet closes). The sheet was attached to a list Section, and SwiftUI applies a Section's modifiers to every row in it, so the sheet is presented once per row | §7 |
+| 12 | **[built 0.7.2]** **Workout summary** at the end of every workout and treadmill session: distance, time, average speed and pace, elevation gain, calories (estimate), incline, a speed and incline chart, comparison with last time | The finished screen only showed time and miles (requested 2026-11-17) | §8c |
+| 13 | **[built 0.7.2]** **Interactive Live Activity buttons:** speed −/+, Pause/Resume and STOP on the Lock Screen and expanded Dynamic Island | Requested 2026-11-17: control the treadmill without opening the app; speed buttons depend on fix 10 | §8 |
+| 14 | **[built 0.7.2]** **Dynamic Live Activity figure:** the icon changes with speed and incline (standing, walking, running, hiking). The moving in-app runner is deferred | Requested 2026-11-17: make the Live Activity feel alive, without motion for now | §8d |
+| 15 | **[built 0.7.2]** **Resume reliability:** after Resume the incline sometimes doesn't take. Resume no longer sends the extra "speed 1.0"; commands wait for the belt to report moving plus a short settle, go out one per poll message, are checked against the treadmill's next readings and resent (up to 3 times, also on a "refused" reply); a failure shows on the workout screen | Reported 2026-11-17: the app sent Start, a redundant "speed 1.0", the incline and the speed back to back with no polls between them, and never checked or retried | §1 |
 | 8 | **Length test on every build:** creates workouts for every length 10–90 min (rules and simulated AI output) and fails the build if any total is off | So it can't regress | §7 |
 
 **Proposed, not yet agreed by the user** (decide before building):
