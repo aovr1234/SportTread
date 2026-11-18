@@ -460,7 +460,7 @@ final class TreadmillController: NSObject, ObservableObject {
             lastEvent = String(format: "Incline changed on the console: %.1f%%", status.incline)
         }
 
-        if (speedMph ?? 0) > 0 != (mph > 0) {
+        if ((speedMph ?? 0) > 0) != (mph > 0) {
             dlog(mph > 0 ? String(format: "Belt running at %.1f mph", mph) : "Belt stopped")
         }
         lastStatusAt = now

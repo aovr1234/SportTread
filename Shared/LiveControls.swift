@@ -2,7 +2,7 @@ import AppIntents
 import Foundation
 
 /// What the Live Activity buttons can ask the app to do.
-enum LiveCommand {
+enum LiveCommand: Equatable {
     case speedUp, speedDown, pauseResume, stop
     case checkIn(String)
 }
