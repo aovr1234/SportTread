@@ -27,7 +27,7 @@ Status: 0.7.2 (fixes 10-15: command pacing, plan goal picker, workout summary, L
     - **Dynamic Island:** compact shows a runner icon and the current speed; long-press shows speed, incline, time and distance.
     - **Workouts:** starting a workout replaces it with the workout Live Activity (only one at a time).
     - **Updates:** same rate limits as workouts (changes at once, readings every 3 s, a refresh every 60 s).
-  - **Two Live Activities at once** (reported 2026-11-17; two causes found in the code, which one happened is not known):
+  - **Two Live Activities at once** (reported 2026-11-17; two causes found in the code; the user confirmed it happened while the workout was still running, so **the relaunch cause is the one that hit**, and workout recovery (fix 19c) is the priority):
   - **After a workout ends**, the belt still reports moving for a second or two while the Stop is on its way. Treadmill mode is no longer paused by then, so it starts a session and its own Live Activity next to the workout's "finished" card (which stays 60 s). The Treadmill tab then shows an open session.
   - **If iOS closed and relaunched the app** during the workout (Bluetooth restores the connection), the running workout was lost: nothing is saved, so the belt looked like a manual session and started a treadmill Live Activity while the old workout one stayed on the Lock Screen. This is the autosave/recovery proposal, now planned as fix 19.
   - **Check-in buttons** (fix 20): Easy / Good / Hard on the Live Activity while a check-in is waiting.
