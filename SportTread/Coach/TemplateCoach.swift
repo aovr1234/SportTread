@@ -141,6 +141,71 @@ enum SafetyCheck {
             && (inclines.max() ?? first.incline) - (inclines.min() ?? first.incline) <= 0.5
     }
 
+    static let maxWarmSeconds = 300
+    static let maxCoolSeconds = 240
+
+    private static func isWarm(_ step: WorkoutStep) -> Bool {
+        let label = step.label.lowercased()
+        return label.contains("warm") || label.contains("ease in")
+    }
+
+    private static func isCool(_ step: WorkoutStep) -> Bool {
+        let label = step.label.lowercased()
+        return label.contains("cool") || label.contains("ease out")
+    }
+
+    /// Keeps the warm-up and cool-down short and distinct (an AI workout can spend 17 of 60 minutes on them):
+    /// the warm-up steps add up to at most 5 min and the cool-down steps to at most 4 min, with the extra
+    /// time shared out over the main steps (the total stays exactly the same); the first warm-up step is at
+    /// least 0.5 mph below the next one (and the last cool-down step 0.5 below the one before); repeated
+    /// names are told apart (Warm-up / Ease in, Ease out / Cool-down).
+    static func trimmedEnds(_ workout: Workout) -> Workout {
+        var steps = workout.steps
+        var warmCount = 0
+        while warmCount < steps.count, isWarm(steps[warmCount]) { warmCount += 1 }
+        var coolCount = 0
+        while coolCount < steps.count - warmCount, isCool(steps[steps.count - 1 - coolCount]) { coolCount += 1 }
+        guard warmCount >= 1, coolCount >= 1, warmCount + coolCount < steps.count else { return workout }
+        let warmRange = 0..<warmCount
+        let coolRange = (steps.count - coolCount)..<steps.count
+        let mainRange = warmCount..<(steps.count - coolCount)
+
+        var moved = 0
+        for (range, cap) in [(warmRange, maxWarmSeconds), (coolRange, maxCoolSeconds)] {
+            let lengths = range.map { steps[$0].seconds }
+            let total = lengths.reduce(0, +)
+            guard total > cap, let fitted = LengthFit.snapped(lengths.map { $0 * cap / total }, to: cap) else { continue }
+            for (offset, index) in range.enumerated() { steps[index].seconds = fitted[offset] }
+            moved += total - cap
+        }
+        if moved > 0 {
+            let lengths = mainRange.map { steps[$0].seconds }
+            let total = lengths.reduce(0, +)
+            let target = total + moved
+            if let fitted = LengthFit.snapped(lengths.map { $0 * target / total }, to: target) {
+                for (offset, index) in mainRange.enumerated() { steps[index].seconds = fitted[offset] }
+            }
+        }
+
+        if warmCount >= 2, steps[1].mph - steps[0].mph < 0.5 {
+            steps[0].mph = max(TreadmillLimits.minMph, ((steps[1].mph - 0.5) * 10).rounded() / 10)
+        }
+        if coolCount >= 2 {
+            let before = steps.count - 2
+            let last = steps.count - 1
+            if steps[before].mph - steps[last].mph < 0.5 {
+                steps[last].mph = max(TreadmillLimits.minMph, ((steps[before].mph - 0.5) * 10).rounded() / 10)
+            }
+        }
+        for index in warmRange { steps[index].label = index == 0 ? "Warm-up" : (index == 1 ? "Ease in" : "Ease in \(index)") }
+        for (offset, index) in coolRange.enumerated() {
+            steps[index].label = index == steps.count - 1 ? "Cool-down" : (offset == 0 ? "Ease out" : "Ease out \(offset + 1)")
+        }
+        var result = workout
+        result.steps = steps
+        return result
+    }
+
     /// Rounds every step to a multiple of 30 s (so an AI workout doesn't come out as 5:25 and 52:10),
     /// keeping the total exactly the same. Returns the workout unchanged if that isn't possible.
     static func snapped(_ workout: Workout) -> Workout {

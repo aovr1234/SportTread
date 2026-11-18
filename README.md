@@ -2,7 +2,7 @@
 
 iPhone app that runs a ProForm 505 CST treadmill without iFit. See [PLAN.md](PLAN.md).
 
-## Current stage: build 0.7.3 (diagnostics log, workout recovery, better workouts)
+## Current stage: build 0.7.4 (shorter warm-up and cool-down; 0.7.3: diagnostics log, workout recovery, better workouts)
 Passed so far: milestones 0, 1, 2, 5, the Live Activity and two field tests. On hold: saving to Apple Health,
 heart rate (waits for the Bluetooth sensor), plan reminders and speed guards.
 
@@ -14,7 +14,7 @@ heart rate (waits for the Bluetooth sensor), plan reminders and speed guards.
 Every build first runs the length tests (`Tests/LengthTests`): every workout length from 10 to 90 minutes,
 simulated AI workouts, live edits and reading a length from text must come out exact, or the build fails.
 
-### Test (0.7.3; the 0.7.2 list still applies: pacing, resume, summary, Live Activity buttons)
+### Test (0.7.4 and 0.7.3; the 0.7.2 list still applies: pacing, resume, summary, Live Activity buttons)
 | # | Test | Pass when |
 |---|---|---|
 | 1 | Setup → Diagnostics | Lines appear as you use the app (connects, commands, steps); Share log sends `diagnostics.log`; Clear empties it |
@@ -26,6 +26,7 @@ simulated AI workouts, live edits and reading a length from text must come out e
 | 7 | Same, then look at the Lock Screen | One Live Activity (the workout's), not two |
 | 8 | End a workout | No treadmill-mode session or second Live Activity appears afterwards |
 | 9 | A check-in comes up during a workout (Coach tab: every 5 min) | The Lock Screen / Dynamic Island show Easy / Good / Hard buttons; tapping one answers it like the in-app card |
+| 10 | Create a 60-min Apple Intelligence workout | Warm-up steps add up to 5 min or less and cool-down steps to 4 min or less; the first warm-up step is 0.5 mph below the next; no two steps share a name; the total is still 60:00 |
 
 Still to check from 0.7: the treadmill-mode Live Activity (ends 2 min after stopping), readiness, goal plans,
 the workout editor, and deleting history.

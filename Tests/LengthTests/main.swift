@@ -205,6 +205,38 @@ let odd = Workout(name: "ai", summary: "", steps: [
 check(SafetyCheck.snapped(odd).totalSeconds == odd.totalSeconds, "snapping the 2:35 / 52:10 / 5:15 workout changed its total")
 check(SafetyCheck.snapped(odd).steps.allSatisfy { $0.seconds % 30 == 0 }, "2:35 / 52:10 / 5:15 wasn't snapped to 30 s steps")
 
+// Warm-up and cool-down stay short and distinct (fix 26), with the total unchanged
+let longEnds = Workout(name: "ai", summary: "", steps: [
+    WorkoutStep(label: "Warm-up", seconds: 270, mph: 3.0, incline: 0),
+    WorkoutStep(label: "Warm-up", seconds: 210, mph: 3.2, incline: 0),
+    WorkoutStep(label: "Steady", seconds: 1020, mph: 3.0, incline: 0),
+    WorkoutStep(label: "Hill", seconds: 690, mph: 3.5, incline: 1),
+    WorkoutStep(label: "Recover", seconds: 870, mph: 3.0, incline: 0),
+    WorkoutStep(label: "Cool-down", seconds: 360, mph: 2.8, incline: 0),
+    WorkoutStep(label: "Cool-down", seconds: 180, mph: 2.6, incline: 0),
+])
+let trimmed = SafetyCheck.trimmedEnds(longEnds)
+check(trimmed.totalSeconds == longEnds.totalSeconds, "trimming changed the total from \(longEnds.totalSeconds) to \(trimmed.totalSeconds)")
+check(trimmed.steps.count == longEnds.steps.count, "trimming changed the number of steps")
+check(trimmed.steps[0].seconds + trimmed.steps[1].seconds <= SafetyCheck.maxWarmSeconds, "warm-up still \(trimmed.steps[0].seconds + trimmed.steps[1].seconds) s")
+check(trimmed.steps[5].seconds + trimmed.steps[6].seconds <= SafetyCheck.maxCoolSeconds, "cool-down still \(trimmed.steps[5].seconds + trimmed.steps[6].seconds) s")
+check(trimmed.steps[1].mph - trimmed.steps[0].mph >= 0.49, "warm-up ramp is only \(trimmed.steps[1].mph - trimmed.steps[0].mph) mph")
+check(trimmed.steps[5].mph - trimmed.steps[6].mph >= 0.49, "cool-down ramp is only \(trimmed.steps[5].mph - trimmed.steps[6].mph) mph")
+check(trimmed.steps.map(\.label) == ["Warm-up", "Ease in", "Steady", "Hill", "Recover", "Ease out", "Cool-down"], "labels are \(trimmed.steps.map(\.label))")
+check(trimmed.steps.allSatisfy { $0.seconds % 30 == 0 && $0.seconds >= 30 }, "a trimmed step isn't on a 30 s mark")
+check(Array(trimmed.steps[2...4]).reduce(0, { $0 + $1.seconds }) > Array(longEnds.steps[2...4]).reduce(0, { $0 + $1.seconds }), "the extra time didn't go to the main steps")
+for minutes in 10...90 {
+    for _ in 0..<100 {
+        let made = Workout(name: "ai", summary: "", steps: randomSteps(count: Int.random(in: 1...24, using: &rng)))
+        let before = SafetyCheck.snapped(SafetyCheck.repair(made, totalMinutes: minutes))
+        let after = SafetyCheck.trimmedEnds(before)
+        check(after.totalSeconds == before.totalSeconds, "trimming changed the total for \(minutes) min")
+        check(after.steps.count == before.steps.count, "trimming changed the step count for \(minutes) min")
+        check(after.steps.allSatisfy { $0.seconds % 30 == 0 && $0.seconds >= 30 }, "trimming left an odd step length for \(minutes) min")
+        check(after.problems.isEmpty, "trimming created problems for \(minutes) min: \(after.problems)")
+    }
+}
+
 // 6. Treadmill command rules (CommandPacer): replayed second by second, no Bluetooth
 let t0 = Date(timeIntervalSince1970: 1_000_000)
 func at(_ seconds: Double) -> Date { t0.addingTimeInterval(seconds) }

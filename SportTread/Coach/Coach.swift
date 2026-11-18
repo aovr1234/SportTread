@@ -32,7 +32,7 @@ final class Coach: ObservableObject {
         if #available(iOS 26.0, *), AppleIntelligence.isAvailable {
             do {
                 let made = try await AppleIntelligence.workout(for: resolved, history: history)
-                let safe = SafetyCheck.snapped(SafetyCheck.repair(made, totalMinutes: resolved.minutes))
+                let safe = SafetyCheck.trimmedEnds(SafetyCheck.snapped(SafetyCheck.repair(made, totalMinutes: resolved.minutes)))
                 if safe.problems.isEmpty, safe.totalSeconds == resolved.minutes * 60 {
                     if resolved.minutes >= 20, SafetyCheck.isFlat(safe.steps) {
                         note = "Apple Intelligence's workout was one flat pace, so the built-in rules made this one."
@@ -115,8 +115,9 @@ enum AppleIntelligence {
         You are a friendly treadmill coach. You design one treadmill workout as a list of timed steps.
         Rules:
         - The steps' seconds must add up to the requested total time.
-        - Start with a warm-up of 3 to 5 minutes in two steps that ramp up (for example 2.0 then 2.5 mph),
-          and end with a cool-down of about 3 minutes in two steps that ramp down.
+        - Start with a warm-up of 3 to 5 minutes in total (never more than 5), in two steps that ramp up
+          by at least 0.5 mph (for example 2.0 then 2.5 mph), and end with a cool-down of about 3 minutes
+          in total (never more than 4) in two steps that ramp down. Most of the time is the main part.
         - The main part is never one flat step: use at least 3 blocks of 5 to 10 minutes that differ in
           speed (by 0.2 to 0.5 mph) or in incline (0 to 3 percent). Never give every step the same speed and incline.
         - If the person is sore, tired or asks for easy, keep the incline at 0 and vary only the speed a little.
