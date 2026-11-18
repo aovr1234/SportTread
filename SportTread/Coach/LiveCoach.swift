@@ -51,6 +51,7 @@ final class LiveCoach: ObservableObject {
 
     func quick(_ kind: Quick, runner: WorkoutRunner) {
         guard runner.isActive, let current = runner.currentStep else { return }
+        dlog("Live coach: quick button \(kind.title)")
         guard let proposal = Self.rules(kind, current: current, remaining: runner.remainingSteps) else {
             message = "There's no main part left to shorten."
             return
@@ -61,6 +62,7 @@ final class LiveCoach: ObservableObject {
     func ask(_ text: String, runner: WorkoutRunner) async {
         let request = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !request.isEmpty, runner.isActive, let current = runner.currentStep else { return }
+        dlog("Live coach request (typed or spoken): \"\(request)\"")
         isWorking = true
         defer { isWorking = false }
 
@@ -116,6 +118,7 @@ final class LiveCoach: ObservableObject {
         made.remaining = SafetyCheck.clamped(made.remaining)
         made.isHarder = Self.isHarder(made, current: current, remaining: runner.remainingSteps)
         let note = "asked \"\(made.request)\": \(made.summary)"
+        dlog("Live coach: \(made.isHarder ? "offered (needs a tap)" : "applied"): \(made.summary)\n" + Coach.describe(made.remaining))
         if made.isHarder {
             runner.present(WorkoutRunner.Offer(
                 message: made.summary + " Apply it?",
@@ -200,6 +203,8 @@ struct GeneratedEdit {
 
 @available(iOS 26.0, *)
 extension AppleIntelligence {
+    private static var loggedEditInstructions = false
+
     private static let editInstructions = """
         You adjust a treadmill workout that is already running, following the runner's request.
         Rules:
@@ -224,8 +229,15 @@ extension AppleIntelligence {
             What the runner has done so far: \(deviations)
             The runner asks: \(request)
             """
+        if !loggedEditInstructions {
+            loggedEditInstructions = true
+            dlog("Live coach instructions (fixed text sent with every request):\n" + editInstructions)
+        }
+        dlog("Live coach prompt sent to Apple Intelligence:\n" + prompt)
         let session = LanguageModelSession(instructions: editInstructions)
         let made = try await session.respond(to: prompt, generating: GeneratedEdit.self).content
+        dlog("Live coach AI answer: \"\(made.summary)\", changes the current step: \(made.changeCurrentStep)\n"
+             + Coach.describe(made.remaining.map { WorkoutStep(label: $0.label, seconds: $0.seconds, mph: $0.mph, incline: $0.incline) }))
         return LiveCoach.Proposal(
             summary: made.summary, request: request,
             remaining: made.remaining.map { WorkoutStep(label: $0.label, seconds: $0.seconds, mph: $0.mph, incline: $0.incline) },

@@ -15,6 +15,12 @@ final class Coach: ObservableObject {
         isWorking = true
         defer { isWorking = false }
 
+        // What was asked, exactly as typed (the readiness text the app adds is logged separately)
+        dlog("Coach request: \(request.minutes) min, \(request.kind.rawValue), \(request.intensity.rawValue)")
+        dlog("Coach note as typed: " + (request.notes.isEmpty ? "(none)" : "\"\(request.notes)\""))
+        dlog("Coach readiness: \(readiness.map { $0.rawValue } ?? "unknown"); text added by the app: "
+             + (readinessNote.map { "\"\($0)\"" } ?? "(none)"))
+
         var resolved = request
         if resolved.kind == .recommend {
             resolved.kind = TemplateCoach.recommendedKind(history: history)
@@ -32,11 +38,10 @@ final class Coach: ObservableObject {
         if #available(iOS 26.0, *), AppleIntelligence.isAvailable {
             do {
                 let made = try await AppleIntelligence.workout(for: resolved, history: history)
-                dlog("Coach: asked for \(resolved.minutes) min \(resolved.kind.rawValue) \(resolved.intensity.rawValue)"
-                     + (resolved.notes.isEmpty ? "" : ", note \(resolved.notes.count) characters"))
-                dlog("Coach: AI proposed " + made.steps.map { String(format: "%@ %d:%02d %.1f/%.1f", $0.label, $0.seconds / 60, $0.seconds % 60, $0.mph, $0.incline) }
-                    .joined(separator: "; "))
+                dlog("Coach AI answer: \"\(made.name)\" / \"\(made.summary)\"; \(made.steps.count) steps adding up to "
+                     + "\(Self.clock(made.totalSeconds)), asked for \(resolved.minutes):00\n" + Self.describe(made.steps))
                 let safe = SafetyCheck.trimmedEnds(SafetyCheck.snapped(SafetyCheck.repair(made, totalMinutes: resolved.minutes)))
+                let comfortable = TemplateCoach.baseSpeed(history: history)
                 var rejected: String?
                 if !safe.problems.isEmpty || safe.totalSeconds != resolved.minutes * 60 {
                     rejected = "it didn't pass the safety check"
@@ -44,24 +49,50 @@ final class Coach: ObservableObject {
                     rejected = "it was one flat pace"
                 } else if !SafetyCheck.matchesKind(safe.steps, kind: resolved.kind, minutes: resolved.minutes) {
                     rejected = "it didn't look like \(resolved.kind.rawValue.lowercased())"
+                } else if resolved.kind == .intervals, resolved.minutes >= 20,
+                          !SafetyCheck.lengthIsClose(made.totalSeconds, to: resolved.minutes * 60) {
+                    rejected = "its own steps added up to \(Self.clock(made.totalSeconds)) instead of \(resolved.minutes):00"
+                } else if resolved.kind == .intervals,
+                          let problem = SafetyCheck.intervalProblem(safe.steps, comfortable: comfortable,
+                                                                    intensity: resolved.intensity, minutes: resolved.minutes) {
+                    rejected = problem
+                } else if let problem = SafetyCheck.easyPaceProblem(safe.steps, kind: resolved.kind,
+                                                                    intensity: resolved.intensity, comfortable: comfortable) {
+                    rejected = problem
                 }
                 if let rejected {
                     note = "Apple Intelligence's workout was rejected (\(rejected)), so the built-in rules made this one."
-                    dlog("Coach: AI workout rejected, \(rejected); using the rules")
+                    dlog("Coach: AI workout rejected because \(rejected). After repair it was:\n" + Self.describe(safe.steps))
                 } else {
                     note = "Created with Apple Intelligence"
-                    dlog("Coach: AI workout accepted")
+                    dlog("Coach: AI workout accepted. Final steps:\n" + Self.describe(safe.steps))
                     return safe
                 }
             } catch {
                 note = "Apple Intelligence couldn't create it (\(error.localizedDescription)), so the built-in rules made this one."
                 dlog("Coach: Apple Intelligence failed: \(error.localizedDescription); using the rules")
             }
-            return Self.exact(TemplateCoach.make(resolved, history: history), minutes: resolved.minutes)
+            return Self.logged(Self.exact(TemplateCoach.make(resolved, history: history), minutes: resolved.minutes))
         }
         #endif
         note = "Made with the built-in rules (Apple Intelligence: \(Self.appleIntelligenceStatus))."
-        return Self.exact(TemplateCoach.make(resolved, history: history), minutes: resolved.minutes)
+        return Self.logged(Self.exact(TemplateCoach.make(resolved, history: history), minutes: resolved.minutes))
+    }
+
+    private static func logged(_ workout: Workout) -> Workout {
+        dlog("Coach: made with the built-in rules. Final steps:\n" + describe(workout.steps))
+        return workout
+    }
+
+    nonisolated static func clock(_ seconds: Int) -> String {
+        String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    /// One line per step, for the diagnostics log.
+    nonisolated static func describe(_ steps: [WorkoutStep]) -> String {
+        steps.enumerated().map { index, step in
+            String(format: "%2d. %@  %@  %.1f mph  %g%%", index + 1, step.label, clock(step.seconds), step.mph, step.incline)
+        }.joined(separator: "\n")
     }
 
     /// A workout of any other length never reaches the preview: if it's off, it's fitted to the requested minutes.
@@ -143,6 +174,8 @@ enum AppleIntelligence {
         - Each step lasts between 30 seconds and 15 minutes.
         """
 
+    private static var loggedInstructions = false
+
     /// What each type means, so a small model can't read "intervals" as "varied walking".
     private static func typeGuide(_ kind: WorkoutRequest.Kind, base: Double) -> String {
         func mph(_ value: Double) -> String { String(format: "%.1f", value) }
@@ -182,6 +215,11 @@ enum AppleIntelligence {
             prompt += "\nThe person adds: \(notes)"
         }
 
+        if !loggedInstructions {
+            loggedInstructions = true
+            dlog("Coach instructions (fixed text sent with every request):\n" + instructions)
+        }
+        dlog("Coach prompt sent to Apple Intelligence:\n" + prompt)
         let session = LanguageModelSession(instructions: instructions)
         let response = try await session.respond(to: prompt, generating: GeneratedWorkout.self)
         let made = response.content

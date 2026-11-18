@@ -43,10 +43,16 @@ final class DiagnosticsLog: NSObject, ObservableObject, MXMetricManagerSubscribe
     func add(_ text: String) {
         let now = Date()
         queue.async { [self] in
-            let line = stamp.string(from: now) + "  " + text
-            write(line)
+            // A long entry (a prompt, a list of steps) is several lines; the first carries the time stamp
+            let time = stamp.string(from: now)
+            let rows = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            var lines: [String] = []
+            for (index, row) in rows.enumerated() {
+                lines.append(index == 0 ? time + "  " + row : String(repeating: " ", count: time.count + 2) + row)
+            }
+            for line in lines { write(line) }
             DispatchQueue.main.async {
-                self.recent.append(line)
+                self.recent.append(contentsOf: lines)
                 if self.recent.count > 40 { self.recent.removeFirst(self.recent.count - 40) }
             }
         }

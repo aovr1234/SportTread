@@ -2,7 +2,7 @@
 
 iPhone app that runs a ProForm 505 CST treadmill without iFit. See [PLAN.md](PLAN.md).
 
-## Current stage: build 0.7.5 (the chosen type is checked, warm-up and cool-down only at the ends; 0.7.4: shorter warm-up and cool-down; 0.7.3: diagnostics log, workout recovery, better workouts)
+## Current stage: build 0.7.6 (the log shows what was asked and what the AI was told, interval quality check; 0.7.5: the chosen type is checked, warm-up and cool-down only at the ends; 0.7.4: shorter warm-up and cool-down; 0.7.3: diagnostics log, workout recovery, better workouts)
 Passed so far: milestones 0, 1, 2, 5, the Live Activity and two field tests. On hold: saving to Apple Health,
 heart rate (waits for the Bluetooth sensor), plan reminders and speed guards.
 
@@ -14,7 +14,7 @@ heart rate (waits for the Bluetooth sensor), plan reminders and speed guards.
 Every build first runs the length tests (`Tests/LengthTests`): every workout length from 10 to 90 minutes,
 simulated AI workouts, live edits and reading a length from text must come out exact, or the build fails.
 
-### Test (0.7.5, 0.7.4 and 0.7.3; the 0.7.2 list still applies: pacing, resume, summary, Live Activity buttons)
+### Test (0.7.6 and earlier; the 0.7.2 list still applies: pacing, resume, summary, Live Activity buttons)
 | # | Test | Pass when |
 |---|---|---|
 | 1 | Setup → Diagnostics | Lines appear as you use the app (connects, commands, steps); Share log sends `diagnostics.log`; Clear empties it |
@@ -31,6 +31,9 @@ simulated AI workouts, live edits and reading a length from text must come out e
 | 12 | Look at any new workout's steps | Warm-up and cool-down only at the start and end (no "Cool-down" in the middle); the warm-up never ends faster than the first main step |
 | 13 | Create a workout, then look at the Coach tab's note box | The note box is empty again |
 | 14 | Setup → Diagnostics after creating a workout | "Coach: asked for…", "AI proposed…" and "accepted" or "rejected, because…" lines |
+| 15 | Create a workout, then Setup → Diagnostics → Share log | The log has "Coach request", "Coach note as typed" (your exact words), the readiness text, the full prompt, the AI's answer step by step, and the final steps, plus the fixed instructions once per launch |
+| 16 | Type a request in the live Coach during a workout | The log has "Live coach request", the prompt, the AI's answer and whether it was applied or offered |
+| 17 | Create Intervals, Easy, 60 min | Either real short fast steps with recoveries (nothing above about 3.8 mph for an easy pace), or a card saying the AI's workout was rejected and why |
 
 Still to check from 0.7: the treadmill-mode Live Activity (ends 2 min after stopping), readiness, goal plans,
 the workout editor, and deleting history.

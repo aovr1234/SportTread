@@ -249,6 +249,44 @@ enum SafetyCheck {
         return result
     }
 
+    /// The AI's own steps add up to within 15% of the requested length. Stretching or squashing a workout
+    /// that is much shorter or longer changes what its intervals are.
+    static func lengthIsClose(_ raw: Int, to requested: Int) -> Bool {
+        guard requested > 0 else { return true }
+        return abs(Double(raw - requested)) / Double(requested) <= 0.15
+    }
+
+    /// Why an Intervals workout isn't a proper interval workout, or nil: a fast step (0.5 mph or more above
+    /// the comfortable speed) longer than 3.5 min, faster than comfortable + 0.8 mph (Easy), + 1.5 (Moderate)
+    /// or + 2.0 (Hard), or with no recovery after it. Checked for workouts of 20 minutes or more.
+    static func intervalProblem(_ steps: [WorkoutStep], comfortable: Double,
+                                intensity: WorkoutRequest.Intensity, minutes: Int) -> String? {
+        guard minutes >= 20 else { return nil }
+        let main = mainSteps(steps)
+        let allowed = comfortable + (intensity == .easy ? 0.8 : (intensity == .moderate ? 1.5 : 2.0)) + 0.05
+        for (index, step) in main.enumerated() where step.mph >= comfortable + 0.5 {
+            if step.seconds > 210 {
+                return String(format: "a fast step lasts %d:%02d", step.seconds / 60, step.seconds % 60)
+            }
+            if step.mph > allowed {
+                return String(format: "a fast step is %.1f mph, too fast for %@", step.mph, intensity.rawValue.lowercased())
+            }
+            if index + 1 < main.count, main[index + 1].mph >= step.mph - 0.4 {
+                return "a fast step has no recovery after it"
+            }
+        }
+        return nil
+    }
+
+    /// An Easy workout never goes faster than the comfortable speed + 0.8 mph (jogs are exempt: they
+    /// start near 4 mph by definition).
+    static func easyPaceProblem(_ steps: [WorkoutStep], kind: WorkoutRequest.Kind,
+                                intensity: WorkoutRequest.Intensity, comfortable: Double) -> String? {
+        guard intensity == .easy, kind != .jog else { return nil }
+        let fastest = mainSteps(steps).map(\.mph).max() ?? 0
+        return fastest > comfortable + 0.85 ? String(format: "it went up to %.1f mph, faster than an easy pace", fastest) : nil
+    }
+
     /// The steps between the warm-up and the cool-down.
     static func mainSteps(_ steps: [WorkoutStep]) -> [WorkoutStep] {
         var start = 0

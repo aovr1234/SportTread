@@ -291,6 +291,45 @@ intervalAI.append(WorkoutStep(label: "Cool-down", seconds: 240, mph: 2.6, inclin
 check(SafetyCheck.matchesKind(intervalAI, kind: .intervals, minutes: 60), "a real interval workout failed the intervals check")
 check(SafetyCheck.matchesKind(flatAI, kind: .intervals, minutes: 15), "short workouts must not be type-checked")
 
+// Interval quality and length (fix 30), replaying the answers from the 0.7.5 log
+func raw(_ label: String, _ minutes: Int, _ seconds: Int, _ mph: Double) -> WorkoutStep {
+    WorkoutStep(label: label, seconds: minutes * 60 + seconds, mph: mph, incline: 0)
+}
+let short30 = Workout(name: "ai", summary: "", steps: [
+    raw("Warm-up", 1, 0, 2.0), raw("Warm-up", 2, 0, 2.5),
+    raw("Fast 1/6", 1, 30, 4.2), raw("Recover", 1, 30, 3.0), raw("Fast 2/6", 1, 30, 4.5), raw("Recover", 1, 30, 3.0),
+    raw("Fast 3/6", 1, 30, 4.8), raw("Recover", 1, 30, 3.0), raw("Fast 4/6", 1, 30, 5.0), raw("Recover", 1, 30, 3.0),
+    raw("Fast 5/6", 1, 30, 5.2), raw("Recover", 1, 30, 3.0), raw("Fast 6/6", 1, 30, 5.5), raw("Cool-down", 2, 0, 3.0),
+])
+check(short30.totalSeconds == 1290, "the 30-min log case adds up to \(short30.totalSeconds) s")
+check(!SafetyCheck.lengthIsClose(short30.totalSeconds, to: 1800), "21.5 min for a 30 min request was called close")
+check(SafetyCheck.lengthIsClose(3600, to: 3600) && SafetyCheck.lengthIsClose(4050, to: 3600) && SafetyCheck.lengthIsClose(3200, to: 3600),
+      "lengths within 15% should be close")
+check(!SafetyCheck.lengthIsClose(4300, to: 3600), "a length 19% over was called close")
+let easy60 = Workout(name: "ai", summary: "", steps: [
+    raw("Warm-up", 1, 30, 2.5), raw("Warm-up ramp", 1, 30, 2.8), raw("Cool-down", 1, 30, 2.2),
+    raw("Fast 1/6", 1, 30, 3.8), raw("Recover 1/6", 1, 30, 3.0), raw("Fast 2/6", 3, 0, 4.2), raw("Recover 2/6", 3, 0, 3.0),
+    raw("Fast 3/6", 4, 30, 4.5), raw("Recover 3/6", 4, 30, 3.0), raw("Fast 4/6", 6, 0, 4.7), raw("Recover 4/6", 6, 0, 3.0),
+    raw("Fast 5/6", 7, 30, 5.0), raw("Recover 5/6", 7, 30, 3.0), raw("Fast 6/6", 9, 0, 5.2), raw("Cool-down", 9, 0, 2.2),
+])
+check(easy60.totalSeconds == 4050, "the 60-min log case adds up to \(easy60.totalSeconds) s")
+let easyFixed = SafetyCheck.trimmedEnds(SafetyCheck.snapped(SafetyCheck.repair(easy60, totalMinutes: 60)))
+check(easyFixed.totalSeconds == 3600, "the repaired 60-min log case is \(easyFixed.totalSeconds) s")
+check(SafetyCheck.intervalProblem(easyFixed.steps, comfortable: 3.0, intensity: .easy, minutes: 60) != nil,
+      "the 60-min Easy log case (fast steps up to 9 min at 5.2 mph) was accepted")
+check(SafetyCheck.easyPaceProblem(easyFixed.steps, kind: .intervals, intensity: .easy, comfortable: 3.0) != nil,
+      "an Easy workout at 5.2 mph passed the easy pace check")
+check(SafetyCheck.easyPaceProblem(easyFixed.steps, kind: .jog, intensity: .easy, comfortable: 3.0) == nil, "jogs must be exempt from the easy pace check")
+check(SafetyCheck.easyPaceProblem(easyFixed.steps, kind: .intervals, intensity: .moderate, comfortable: 3.0) == nil, "only Easy has the pace cap")
+check(SafetyCheck.intervalProblem(intervalAI, comfortable: 3.0, intensity: .moderate, minutes: 60) == nil,
+      "a proper interval workout (2 min at 4.2, 3 min recoveries) was rejected: \(SafetyCheck.intervalProblem(intervalAI, comfortable: 3.0, intensity: .moderate, minutes: 60) ?? "")")
+check(SafetyCheck.intervalProblem(intervalAI, comfortable: 3.0, intensity: .easy, minutes: 60) != nil, "4.2 mph intervals passed as Easy for a 3.0 mph walker")
+check(SafetyCheck.intervalProblem(intervalAI, comfortable: 3.0, intensity: .moderate, minutes: 15) == nil, "short workouts must not be quality-checked")
+check(SafetyCheck.easyPaceProblem(variedAI, kind: .walk, intensity: .easy, comfortable: 3.0) == nil, "a 3.5 mph easy walk was rejected")
+var noRecovery = intervalAI
+noRecovery[2].mph = 4.2   // the recovery after the first fast step is fast too
+check(SafetyCheck.intervalProblem(noRecovery, comfortable: 3.0, intensity: .moderate, minutes: 60) != nil, "a fast step with no recovery passed")
+
 // 6. Treadmill command rules (CommandPacer): replayed second by second, no Bluetooth
 let t0 = Date(timeIntervalSince1970: 1_000_000)
 func at(_ seconds: Double) -> Date { t0.addingTimeInterval(seconds) }
