@@ -154,21 +154,58 @@ enum SafetyCheck {
         return label.contains("cool") || label.contains("ease out")
     }
 
-    /// Keeps the warm-up and cool-down short and distinct (an AI workout can spend 17 of 60 minutes on them):
-    /// the warm-up steps add up to at most 5 min and the cool-down steps to at most 4 min, with the extra
-    /// time shared out over the main steps (the total stays exactly the same); the first warm-up step is at
-    /// least 0.5 mph below the next one (and the last cool-down step 0.5 below the one before); repeated
-    /// names are told apart (Warm-up / Ease in, Ease out / Cool-down).
+    /// Cleans up the ends of an AI workout (an AI workout can spend 17 of 60 minutes on them, put a "Cool-down"
+    /// in the middle, or warm up faster than it then walks):
+    /// - a step called cool-down or warm-up that isn't in the end groups is renamed Recover or Build;
+    /// - a single warm-up or cool-down step of 2 min or more is split in two, so it ramps;
+    /// - the warm-up steps add up to at most 5 min and the cool-down steps to at most 4 min, the extra time
+    ///   shared out over the main steps (the total stays exactly the same);
+    /// - the warm-up is never faster than the first main step, nor the cool-down faster than the last one;
+    /// - the first warm-up step is at least 0.5 mph below the next (and the last cool-down step 0.5 below
+    ///   the one before);
+    /// - repeated names are told apart (Warm-up / Ease in, Ease out / Cool-down).
     static func trimmedEnds(_ workout: Workout) -> Workout {
         var steps = workout.steps
-        var warmCount = 0
-        while warmCount < steps.count, isWarm(steps[warmCount]) { warmCount += 1 }
-        var coolCount = 0
-        while coolCount < steps.count - warmCount, isCool(steps[steps.count - 1 - coolCount]) { coolCount += 1 }
-        guard warmCount >= 1, coolCount >= 1, warmCount + coolCount < steps.count else { return workout }
-        let warmRange = 0..<warmCount
-        let coolRange = (steps.count - coolCount)..<steps.count
-        let mainRange = warmCount..<(steps.count - coolCount)
+        func groups() -> (warm: Int, cool: Int)? {
+            var warm = 0
+            while warm < steps.count, isWarm(steps[warm]) { warm += 1 }
+            var cool = 0
+            while cool < steps.count - warm, isCool(steps[steps.count - 1 - cool]) { cool += 1 }
+            guard warm >= 1, cool >= 1, warm + cool < steps.count else { return nil }
+            return (warm, cool)
+        }
+        guard var counts = groups() else { return workout }
+        let minMph = TreadmillLimits.minMph
+
+        // A cool-down or warm-up in the middle is just a slow or building step
+        for index in counts.warm..<(steps.count - counts.cool) {
+            if isCool(steps[index]) { steps[index].label = "Recover" } else if isWarm(steps[index]) { steps[index].label = "Build" }
+        }
+
+        // One long warm-up or cool-down step becomes two, so that it ramps
+        if counts.warm == 1, steps[0].seconds >= 120 {
+            let first = max(30, (steps[0].seconds / 2) / 30 * 30)
+            var low = steps[0]
+            low.seconds = first
+            low.mph = max(minMph, ((low.mph - 0.5) * 10).rounded() / 10)
+            steps[0].seconds -= first
+            steps.insert(low, at: 0)
+            counts.warm = 2
+        }
+        if counts.cool == 1, steps[steps.count - 1].seconds >= 120 {
+            let last = steps.count - 1
+            let first = max(30, (steps[last].seconds / 2) / 30 * 30)
+            var high = steps[last]
+            high.seconds = first
+            steps[last].seconds -= first
+            steps[last].mph = max(minMph, ((steps[last].mph - 0.5) * 10).rounded() / 10)
+            steps.insert(high, at: last)
+            counts.cool = 2
+        }
+
+        let warmRange = 0..<counts.warm
+        let coolRange = (steps.count - counts.cool)..<steps.count
+        let mainRange = counts.warm..<(steps.count - counts.cool)
 
         var moved = 0
         for (range, cap) in [(warmRange, maxWarmSeconds), (coolRange, maxCoolSeconds)] {
@@ -187,14 +224,20 @@ enum SafetyCheck {
             }
         }
 
-        if warmCount >= 2, steps[1].mph - steps[0].mph < 0.5 {
-            steps[0].mph = max(TreadmillLimits.minMph, ((steps[1].mph - 0.5) * 10).rounded() / 10)
+        // Never warm up faster than the walk that follows, nor cool down faster than the one before
+        let firstMain = steps[mainRange.lowerBound].mph
+        let lastMain = steps[mainRange.upperBound - 1].mph
+        for index in warmRange { steps[index].mph = min(steps[index].mph, firstMain) }
+        for index in coolRange { steps[index].mph = min(steps[index].mph, lastMain) }
+
+        if counts.warm >= 2, steps[1].mph - steps[0].mph < 0.5 {
+            steps[0].mph = max(minMph, ((steps[1].mph - 0.5) * 10).rounded() / 10)
         }
-        if coolCount >= 2 {
+        if counts.cool >= 2 {
             let before = steps.count - 2
             let last = steps.count - 1
             if steps[before].mph - steps[last].mph < 0.5 {
-                steps[last].mph = max(TreadmillLimits.minMph, ((steps[before].mph - 0.5) * 10).rounded() / 10)
+                steps[last].mph = max(minMph, ((steps[before].mph - 0.5) * 10).rounded() / 10)
             }
         }
         for index in warmRange { steps[index].label = index == 0 ? "Warm-up" : (index == 1 ? "Ease in" : "Ease in \(index)") }
@@ -204,6 +247,35 @@ enum SafetyCheck {
         var result = workout
         result.steps = steps
         return result
+    }
+
+    /// The steps between the warm-up and the cool-down.
+    static func mainSteps(_ steps: [WorkoutStep]) -> [WorkoutStep] {
+        var start = 0
+        while start < steps.count, isWarm(steps[start]) { start += 1 }
+        var end = steps.count
+        while end > start, isCool(steps[end - 1]) { end -= 1 }
+        return Array(steps[start..<end])
+    }
+
+    /// Does the workout look like the type that was asked for? Checked for workouts of 20 minutes or more:
+    /// Intervals needs at least 4 swings of 0.5 mph or more between neighbouring main steps, Hills an
+    /// incline range of 2% or more, Jog a main speed of 3.8 mph or more. Walk accepts anything.
+    static func matchesKind(_ steps: [WorkoutStep], kind: WorkoutRequest.Kind, minutes: Int) -> Bool {
+        guard minutes >= 20 else { return true }
+        let main = mainSteps(steps)
+        guard !main.isEmpty else { return false }
+        switch kind {
+        case .intervals:
+            return zip(main, main.dropFirst()).filter { abs($0.mph - $1.mph) >= 0.49 }.count >= 4
+        case .hills:
+            let inclines = main.map(\.incline)
+            return (inclines.max() ?? 0) - (inclines.min() ?? 0) >= 1.99
+        case .jog:
+            return (main.map(\.mph).max() ?? 0) >= 3.8
+        case .walk, .recommend:
+            return true
+        }
     }
 
     /// Rounds every step to a multiple of 30 s (so an AI workout doesn't come out as 5:25 and 52:10),

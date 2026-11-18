@@ -32,19 +32,30 @@ final class Coach: ObservableObject {
         if #available(iOS 26.0, *), AppleIntelligence.isAvailable {
             do {
                 let made = try await AppleIntelligence.workout(for: resolved, history: history)
+                dlog("Coach: asked for \(resolved.minutes) min \(resolved.kind.rawValue) \(resolved.intensity.rawValue)"
+                     + (resolved.notes.isEmpty ? "" : ", note \(resolved.notes.count) characters"))
+                dlog("Coach: AI proposed " + made.steps.map { String(format: "%@ %d:%02d %.1f/%.1f", $0.label, $0.seconds / 60, $0.seconds % 60, $0.mph, $0.incline) }
+                    .joined(separator: "; "))
                 let safe = SafetyCheck.trimmedEnds(SafetyCheck.snapped(SafetyCheck.repair(made, totalMinutes: resolved.minutes)))
-                if safe.problems.isEmpty, safe.totalSeconds == resolved.minutes * 60 {
-                    if resolved.minutes >= 20, SafetyCheck.isFlat(safe.steps) {
-                        note = "Apple Intelligence's workout was one flat pace, so the built-in rules made this one."
-                    } else {
-                        note = "Created with Apple Intelligence"
-                        return safe
-                    }
+                var rejected: String?
+                if !safe.problems.isEmpty || safe.totalSeconds != resolved.minutes * 60 {
+                    rejected = "it didn't pass the safety check"
+                } else if resolved.minutes >= 20, SafetyCheck.isFlat(safe.steps) {
+                    rejected = "it was one flat pace"
+                } else if !SafetyCheck.matchesKind(safe.steps, kind: resolved.kind, minutes: resolved.minutes) {
+                    rejected = "it didn't look like \(resolved.kind.rawValue.lowercased())"
+                }
+                if let rejected {
+                    note = "Apple Intelligence's workout was rejected (\(rejected)), so the built-in rules made this one."
+                    dlog("Coach: AI workout rejected, \(rejected); using the rules")
                 } else {
-                    note = "Apple Intelligence's workout didn't pass the safety check, so the built-in rules made this one."
+                    note = "Created with Apple Intelligence"
+                    dlog("Coach: AI workout accepted")
+                    return safe
                 }
             } catch {
                 note = "Apple Intelligence couldn't create it (\(error.localizedDescription)), so the built-in rules made this one."
+                dlog("Coach: Apple Intelligence failed: \(error.localizedDescription); using the rules")
             }
             return Self.exact(TemplateCoach.make(resolved, history: history), minutes: resolved.minutes)
         }
@@ -122,6 +133,8 @@ enum AppleIntelligence {
           speed (by 0.2 to 0.5 mph) or in incline (0 to 3 percent). Never give every step the same speed and incline.
         - If the person is sore, tired or asks for easy, keep the incline at 0 and vary only the speed a little.
         - Make step lengths whole minutes (multiples of 60 seconds), except interval steps.
+        - The chosen workout type and intensity are required. If the person's note seems to ask for something
+          else, still make that type and intensity and use the note only to adjust how hard it is.
         - Speeds are in miles per hour. Walking is about 2.5 to 3.8 mph, jogging about 4 to 6 mph.
           Stay close to the person's comfortable speed and never go above 10 mph.
         - Incline is 0 to 10 percent.
@@ -129,6 +142,23 @@ enum AppleIntelligence {
         - Easy means relaxed, moderate means somewhat hard, hard means challenging but safe.
         - Each step lasts between 30 seconds and 15 minutes.
         """
+
+    /// What each type means, so a small model can't read "intervals" as "varied walking".
+    private static func typeGuide(_ kind: WorkoutRequest.Kind, base: Double) -> String {
+        func mph(_ value: Double) -> String { String(format: "%.1f", value) }
+        switch kind {
+        case .intervals:
+            return "Type rules for intervals: the main part repeats at least 5 pairs of a fast step (1 to 3 minutes at \(mph(base + 0.8)) to \(mph(base + 1.5)) mph) and a recovery step (1.5 to 3 minutes at \(mph(base)) mph). It is not a steady walk."
+        case .hills:
+            return "Type rules for hills: the main part is blocks of 2 to 4 minutes whose incline changes between 2 and 8 percent, with the speed staying near \(mph(base)) mph."
+        case .jog:
+            return "Type rules for jog: the main part is jogging at 4 to 6 mph in blocks of 5 to 10 minutes."
+        case .walk:
+            return "Type rules for walk: the main part is walking at 2.5 to 3.8 mph in blocks that vary a little."
+        case .recommend:
+            return ""
+        }
+    }
 
     static func workout(for request: WorkoutRequest, history: [HistoryEntry]) async throws -> Workout {
         let base = TemplateCoach.baseSpeed(history: history)
@@ -143,6 +173,7 @@ enum AppleIntelligence {
             Total time: exactly \(request.minutes * 60) seconds.
             The person's comfortable walking speed is about \(String(format: "%.1f", base)) mph.
             """
+        prompt += "\n" + typeGuide(request.kind, base: base)
         prompt += recent.isEmpty
             ? "\nNo previous workouts yet, so keep it approachable."
             : "\nRecent workouts:\n" + recent.joined(separator: "\n")

@@ -2,7 +2,7 @@
 
 iPhone app that runs a ProForm 505 CST treadmill without iFit. See [PLAN.md](PLAN.md).
 
-## Current stage: build 0.7.4 (shorter warm-up and cool-down; 0.7.3: diagnostics log, workout recovery, better workouts)
+## Current stage: build 0.7.5 (the chosen type is checked, warm-up and cool-down only at the ends; 0.7.4: shorter warm-up and cool-down; 0.7.3: diagnostics log, workout recovery, better workouts)
 Passed so far: milestones 0, 1, 2, 5, the Live Activity and two field tests. On hold: saving to Apple Health,
 heart rate (waits for the Bluetooth sensor), plan reminders and speed guards.
 
@@ -14,7 +14,7 @@ heart rate (waits for the Bluetooth sensor), plan reminders and speed guards.
 Every build first runs the length tests (`Tests/LengthTests`): every workout length from 10 to 90 minutes,
 simulated AI workouts, live edits and reading a length from text must come out exact, or the build fails.
 
-### Test (0.7.4 and 0.7.3; the 0.7.2 list still applies: pacing, resume, summary, Live Activity buttons)
+### Test (0.7.5, 0.7.4 and 0.7.3; the 0.7.2 list still applies: pacing, resume, summary, Live Activity buttons)
 | # | Test | Pass when |
 |---|---|---|
 | 1 | Setup → Diagnostics | Lines appear as you use the app (connects, commands, steps); Share log sends `diagnostics.log`; Clear empties it |
@@ -27,6 +27,10 @@ simulated AI workouts, live edits and reading a length from text must come out e
 | 8 | End a workout | No treadmill-mode session or second Live Activity appears afterwards |
 | 9 | A check-in comes up during a workout (Coach tab: every 5 min) | The Lock Screen / Dynamic Island show Easy / Good / Hard buttons; tapping one answers it like the in-app card |
 | 10 | Create a 60-min Apple Intelligence workout | Warm-up steps add up to 5 min or less and cool-down steps to 4 min or less; the first warm-up step is 0.5 mph below the next; no two steps share a name; the total is still 60:00 |
+| 11 | Pick **Intervals** (60 min) and create | The workout alternates fast and recovery steps (5 or more pairs); if Apple Intelligence gave walks the card says it was rejected and the rules made it |
+| 12 | Look at any new workout's steps | Warm-up and cool-down only at the start and end (no "Cool-down" in the middle); the warm-up never ends faster than the first main step |
+| 13 | Create a workout, then look at the Coach tab's note box | The note box is empty again |
+| 14 | Setup → Diagnostics after creating a workout | "Coach: asked for…", "AI proposed…" and "accepted" or "rejected, because…" lines |
 
 Still to check from 0.7: the treadmill-mode Live Activity (ends 2 min after stopping), readiness, goal plans,
 the workout editor, and deleting history.

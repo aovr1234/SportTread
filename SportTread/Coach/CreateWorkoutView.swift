@@ -74,6 +74,7 @@ struct CreateWorkoutView: View {
                         Task {
                             created = await coach.create(request, history: library.history,
                                                          readiness: readiness.level, readinessNote: readiness.coachSummary)
+                            request.notes = ""  // an old note must not steer the next workout
                         }
                     } label: {
                         HStack(spacing: 8) {

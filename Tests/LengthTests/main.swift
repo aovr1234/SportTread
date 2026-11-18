@@ -218,6 +218,7 @@ let longEnds = Workout(name: "ai", summary: "", steps: [
 let trimmed = SafetyCheck.trimmedEnds(longEnds)
 check(trimmed.totalSeconds == longEnds.totalSeconds, "trimming changed the total from \(longEnds.totalSeconds) to \(trimmed.totalSeconds)")
 check(trimmed.steps.count == longEnds.steps.count, "trimming changed the number of steps")
+check(trimmed.steps[1].mph <= trimmed.steps[2].mph + 0.001, "the warm-up still ends faster than the first main step")
 check(trimmed.steps[0].seconds + trimmed.steps[1].seconds <= SafetyCheck.maxWarmSeconds, "warm-up still \(trimmed.steps[0].seconds + trimmed.steps[1].seconds) s")
 check(trimmed.steps[5].seconds + trimmed.steps[6].seconds <= SafetyCheck.maxCoolSeconds, "cool-down still \(trimmed.steps[5].seconds + trimmed.steps[6].seconds) s")
 check(trimmed.steps[1].mph - trimmed.steps[0].mph >= 0.49, "warm-up ramp is only \(trimmed.steps[1].mph - trimmed.steps[0].mph) mph")
@@ -231,11 +232,64 @@ for minutes in 10...90 {
         let before = SafetyCheck.snapped(SafetyCheck.repair(made, totalMinutes: minutes))
         let after = SafetyCheck.trimmedEnds(before)
         check(after.totalSeconds == before.totalSeconds, "trimming changed the total for \(minutes) min")
-        check(after.steps.count == before.steps.count, "trimming changed the step count for \(minutes) min")
+        check(after.steps.count >= before.steps.count && after.steps.count <= before.steps.count + 2, "trimming changed the step count for \(minutes) min from \(before.steps.count) to \(after.steps.count)")
         check(after.steps.allSatisfy { $0.seconds % 30 == 0 && $0.seconds >= 30 }, "trimming left an odd step length for \(minutes) min")
         check(after.problems.isEmpty, "trimming created problems for \(minutes) min: \(after.problems)")
     }
 }
+
+// The 0.7.4 workout with a "Cool-down" as step 3 and a warm-up faster than the walk (fix 27)
+let misplaced = Workout(name: "ai", summary: "", steps: [
+    WorkoutStep(label: "Warm-up", seconds: 150, mph: 3.0, incline: 0),
+    WorkoutStep(label: "Warm-up", seconds: 150, mph: 3.5, incline: 0),
+    WorkoutStep(label: "Cool-down", seconds: 270, mph: 2.8, incline: 0),
+    WorkoutStep(label: "Hill 1", seconds: 480, mph: 3.2, incline: 1),
+    WorkoutStep(label: "Steady walk", seconds: 660, mph: 3.0, incline: 0),
+    WorkoutStep(label: "Hill 2", seconds: 480, mph: 3.7, incline: 2),
+    WorkoutStep(label: "Steady walk", seconds: 690, mph: 3.0, incline: 0),
+    WorkoutStep(label: "Hill 3", seconds: 480, mph: 3.4, incline: 3),
+    WorkoutStep(label: "Cool-down", seconds: 240, mph: 2.8, incline: 0),
+])
+let fixed27 = SafetyCheck.trimmedEnds(misplaced)
+check(fixed27.totalSeconds == misplaced.totalSeconds, "fix 27 changed the total to \(fixed27.totalSeconds) s")
+check(fixed27.steps[2].label == "Recover", "the middle Cool-down is now called \(fixed27.steps[2].label)")
+check(fixed27.steps.filter { $0.label.lowercased().contains("cool") }.count == 1 && fixed27.steps.last?.label == "Cool-down", "the cool-down isn't only at the end: \(fixed27.steps.map(\.label))")
+check(fixed27.steps.filter { $0.label == "Warm-up" || $0.label == "Ease in" }.count == 2, "warm-up steps are \(fixed27.steps.map(\.label))")
+check(fixed27.steps[1].mph <= fixed27.steps[2].mph + 0.001, "the warm-up still ends faster than the first main step")
+check(fixed27.steps[1].mph - fixed27.steps[0].mph >= 0.49, "the warm-up doesn't ramp")
+check(fixed27.steps.count == misplaced.steps.count + 1, "the single cool-down wasn't split in two: \(fixed27.steps.count) steps")
+check(WorkoutEdits.isCooldown(fixed27.steps[2]) == false, "live edits would treat the Recover step as the cool-down")
+check(fixed27.steps.allSatisfy { $0.seconds % 30 == 0 && $0.seconds >= 30 }, "fix 27 left an odd step length")
+
+// The chosen type is checked (fix 28): rules workouts of every type pass, walking passes as nothing else
+for minutes in 20...90 {
+    for kind in [WorkoutRequest.Kind.walk, .jog, .intervals, .hills] {
+        for intensity in WorkoutRequest.Intensity.allCases {
+            for h in [[], history] {
+                var request = WorkoutRequest()
+                request.minutes = minutes
+                request.kind = kind
+                request.intensity = intensity
+                let w = TemplateCoach.make(request, history: h)
+                check(SafetyCheck.matchesKind(w.steps, kind: kind, minutes: minutes),
+                      "rules \(kind.rawValue)/\(intensity.rawValue) \(minutes) min doesn't pass its own type check")
+            }
+        }
+    }
+}
+check(!SafetyCheck.matchesKind(variedAI.steps, kind: .intervals, minutes: 60), "a walk with one hill passed as intervals")
+check(!SafetyCheck.matchesKind(fixed27.steps, kind: .intervals, minutes: 60), "the 0.7.4 walk passed as intervals")
+check(!SafetyCheck.matchesKind(flatAI.steps, kind: .hills, minutes: 60), "a flat walk passed as hills")
+check(!SafetyCheck.matchesKind(variedAI.steps, kind: .jog, minutes: 60), "a 3.5 mph walk passed as a jog")
+check(SafetyCheck.matchesKind(variedAI.steps, kind: .walk, minutes: 60), "a walk didn't pass as a walk")
+var intervalAI: [WorkoutStep] = [WorkoutStep(label: "Warm-up", seconds: 300, mph: 3.0, incline: 0)]
+for round in 1...6 {
+    intervalAI.append(WorkoutStep(label: "Fast \(round)", seconds: 120, mph: 4.2, incline: 1))
+    intervalAI.append(WorkoutStep(label: "Recover \(round)", seconds: 180, mph: 3.0, incline: 0))
+}
+intervalAI.append(WorkoutStep(label: "Cool-down", seconds: 240, mph: 2.6, incline: 0))
+check(SafetyCheck.matchesKind(intervalAI, kind: .intervals, minutes: 60), "a real interval workout failed the intervals check")
+check(SafetyCheck.matchesKind(flatAI.steps, kind: .intervals, minutes: 15), "short workouts must not be type-checked")
 
 // 6. Treadmill command rules (CommandPacer): replayed second by second, no Bluetooth
 let t0 = Date(timeIntervalSince1970: 1_000_000)
