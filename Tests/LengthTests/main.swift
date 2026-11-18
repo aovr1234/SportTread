@@ -277,11 +277,11 @@ for minutes in 20...90 {
         }
     }
 }
-check(!SafetyCheck.matchesKind(variedAI.steps, kind: .intervals, minutes: 60), "a walk with one hill passed as intervals")
+check(!SafetyCheck.matchesKind(variedAI, kind: .intervals, minutes: 60), "a walk with one hill passed as intervals")
 check(!SafetyCheck.matchesKind(fixed27.steps, kind: .intervals, minutes: 60), "the 0.7.4 walk passed as intervals")
-check(!SafetyCheck.matchesKind(flatAI.steps, kind: .hills, minutes: 60), "a flat walk passed as hills")
-check(!SafetyCheck.matchesKind(variedAI.steps, kind: .jog, minutes: 60), "a 3.5 mph walk passed as a jog")
-check(SafetyCheck.matchesKind(variedAI.steps, kind: .walk, minutes: 60), "a walk didn't pass as a walk")
+check(!SafetyCheck.matchesKind(flatAI, kind: .hills, minutes: 60), "a flat walk passed as hills")
+check(!SafetyCheck.matchesKind(variedAI, kind: .jog, minutes: 60), "a 3.5 mph walk passed as a jog")
+check(SafetyCheck.matchesKind(variedAI, kind: .walk, minutes: 60), "a walk didn't pass as a walk")
 var intervalAI: [WorkoutStep] = [WorkoutStep(label: "Warm-up", seconds: 300, mph: 3.0, incline: 0)]
 for round in 1...6 {
     intervalAI.append(WorkoutStep(label: "Fast \(round)", seconds: 120, mph: 4.2, incline: 1))
@@ -289,7 +289,7 @@ for round in 1...6 {
 }
 intervalAI.append(WorkoutStep(label: "Cool-down", seconds: 240, mph: 2.6, incline: 0))
 check(SafetyCheck.matchesKind(intervalAI, kind: .intervals, minutes: 60), "a real interval workout failed the intervals check")
-check(SafetyCheck.matchesKind(flatAI.steps, kind: .intervals, minutes: 15), "short workouts must not be type-checked")
+check(SafetyCheck.matchesKind(flatAI, kind: .intervals, minutes: 15), "short workouts must not be type-checked")
 
 // 6. Treadmill command rules (CommandPacer): replayed second by second, no Bluetooth
 let t0 = Date(timeIntervalSince1970: 1_000_000)
