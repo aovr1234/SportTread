@@ -52,6 +52,7 @@ struct CreateWorkoutView: View {
                 Section {
                     TextField("e.g. knees are sore, or push me today", text: $request.notes, axis: .vertical)
                         .lineLimit(1...3)
+                        .submitLabel(.done)
                         .onChange(of: request.notes) { _, text in
                             // A length in the text counts: it sets the picker, so the two can't disagree
                             if case .total(let minutes)? = LengthParser.request(in: text) {
@@ -92,6 +93,13 @@ struct CreateWorkoutView: View {
             .listRowBackground(glassRow)
             .sportList()
             .navigationTitle("Coach")
+            .scrollDismissesKeyboard(.immediately)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { hideKeyboard() }.fontWeight(.semibold)
+                }
+            }
             .task { if readiness.level == nil { await readiness.refresh() } }
             .sheet(isPresented: $settingUpPlan) { PlanSetupView() }
             .confirmationDialog("End this plan?", isPresented: $confirmingEndPlan, titleVisibility: .visible) {

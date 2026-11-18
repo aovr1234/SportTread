@@ -11,7 +11,19 @@ struct SportTreadApp: App {
     @StateObject private var readiness = Readiness()
     @StateObject private var health = HealthTest()
 
+    @Environment(\.scenePhase) private var scenePhase
+
     init() {
+        let launchState: String
+        switch UIApplication.shared.applicationState {
+        case .active: launchState = "opened by the user"
+        case .inactive: launchState = "starting"
+        case .background: launchState = "started in the background by iOS"
+        @unknown default: launchState = "unknown"
+        }
+        DiagnosticsLog.shared.start(launch: launchState + (WorkoutRunner.hasSavedRun ? ", a workout was saved" : ""))
+        // One Live Activity at a time: clear leftovers (the workout's own is kept if it is about to be recovered)
+        LiveActivityCleanup.endStale(keepWorkout: WorkoutRunner.hasSavedRun)
         let treadmill = TreadmillController()
         let runner = WorkoutRunner(treadmill: treadmill)
         let dataFolder = DataFolder()
@@ -34,6 +46,8 @@ struct SportTreadApp: App {
                 } else if treadmill.isRunning {
                     treadmill.stop()
                 }
+            case .checkIn(let feeling):
+                if runner.checkInDue { runner.answerCheckIn(feeling) }
             case .stop:
                 if runner.isActive {
                     runner.pause(reason: "Stopped. Resume, or End workout to finish.")
@@ -84,6 +98,9 @@ struct SportTreadApp: App {
             .preferredColorScheme(.dark)
             .tint(Theme.lime)
             .task { library.reload() }
+            .onChange(of: scenePhase) { _, phase in
+                dlog("App \(phase == .active ? "in front" : (phase == .background ? "in the background" : "inactive"))")
+            }
             .onChange(of: dataFolder.folderDescription) { library.reload() }  // folder is ready a moment after launch
         }
     }

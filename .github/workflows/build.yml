@@ -21,7 +21,7 @@ jobs:
       # The build fails if any workout or live edit comes out the wrong length, even by a second
       - name: Length tests
         run: |
-          swiftc -swift-version 5 -O             SportTread/Limits.swift SportTread/Workouts/Workout.swift SportTread/Coach/CoachModels.swift             SportTread/Coach/TemplateCoach.swift SportTread/Coach/LengthFit.swift SportTread/Coach/WorkoutEdits.swift SportTread/History/WorkoutSummary.swift             Tests/LengthTests/main.swift -o lengthtests
+          swiftc -swift-version 5 -O             SportTread/Limits.swift SportTread/Workouts/Workout.swift SportTread/Coach/CoachModels.swift             SportTread/Coach/TemplateCoach.swift SportTread/Coach/LengthFit.swift SportTread/Coach/WorkoutEdits.swift SportTread/History/WorkoutSummary.swift SportTread/Treadmill/CommandPacer.swift             Tests/LengthTests/main.swift -o lengthtests
           ./lengthtests
 
       - name: Install XcodeGen

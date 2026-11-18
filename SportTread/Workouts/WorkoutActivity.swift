@@ -18,6 +18,39 @@ final class LiveActivityStatus: ObservableObject {
     }
 }
 
+/// Keeps to one Live Activity at a time: leftovers from an earlier run are ended when the app launches.
+enum LiveActivityCleanup {
+    /// Ends treadmill Live Activities, and workout ones too unless a saved workout is about to be recovered.
+    static func endStale(keepWorkout: Bool) {
+        Task {
+            for old in Activity<TreadmillActivityAttributes>.activities {
+                await old.end(nil, dismissalPolicy: .immediate)
+            }
+            if !keepWorkout {
+                for old in Activity<WorkoutActivityAttributes>.activities {
+                    await old.end(nil, dismissalPolicy: .immediate)
+                }
+            }
+        }
+    }
+
+    static func endTreadmill() {
+        Task {
+            for old in Activity<TreadmillActivityAttributes>.activities {
+                await old.end(nil, dismissalPolicy: .immediate)
+            }
+        }
+    }
+
+    static func endWorkout() {
+        Task {
+            for old in Activity<WorkoutActivityAttributes>.activities {
+                await old.end(nil, dismissalPolicy: .immediate)
+            }
+        }
+    }
+}
+
 /// Starts, updates and ends the workout's Live Activity (Lock Screen and Dynamic Island).
 /// Updates are rate-limited: step, pause and finish changes go out at once; speed or incline
 /// changes at most every 3 s; otherwise a refresh every 60 s. The countdown ticks on its own.
@@ -29,8 +62,18 @@ final class WorkoutActivity {
     private var lastSent: State?
     private var lastSentAt = Date.distantPast
 
+    /// After the app was relaunched during a workout: picks up the workout's Live Activity that is still showing.
+    func adopt() -> Bool {
+        guard let existing = Activity<WorkoutActivityAttributes>.activities.first else { return false }
+        activity = existing
+        lastSent = nil
+        dlog("Live Activity: picked up the workout's existing one")
+        return true
+    }
+
     func start(name: String, totalSeconds: Int, state: State) {
         end()
+        LiveActivityCleanup.endTreadmill()
         let status = LiveActivityStatus.shared
         guard status.enabled else {
             status.lastResult = "Live Activities are turned off for SportTread (Settings › SportTread)"
@@ -45,8 +88,10 @@ final class WorkoutActivity {
             lastSent = state
             lastSentAt = Date()
             status.lastResult = "Started \(Date().formatted(date: .omitted, time: .shortened)) (\(String(describing: started.activityState)))"
+            dlog("Live Activity: workout one started")
         } catch {
             status.lastResult = "iOS refused: \(error.localizedDescription) [\(String(describing: error))]"
+            dlog("Live Activity: iOS refused the workout one: \(error.localizedDescription)")
         }
     }
 
@@ -55,7 +100,8 @@ final class WorkoutActivity {
         let now = Date()
         let elapsed = now.timeIntervalSince(lastSentAt)
         if let last = lastSent {
-            let structural = last.stepLabel != state.stepLabel || last.paused != state.paused || last.finished != state.finished
+            let structural = last.stepLabel != state.stepLabel || last.paused != state.paused
+                || last.finished != state.finished || last.checkIn != state.checkIn
             let readings = abs(last.mph - state.mph) >= 0.05 || abs(last.incline - state.incline) >= 0.25
             guard structural || (readings && elapsed >= 3) || elapsed >= 60 else { return }
         }
@@ -102,6 +148,8 @@ final class TreadmillActivity {
 
     func start(_ state: State) {
         guard activity == nil, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        LiveActivityCleanup.endWorkout()
+        dlog("Live Activity: treadmill one starting")
         do {
             activity = try Activity.request(
                 attributes: TreadmillActivityAttributes(),

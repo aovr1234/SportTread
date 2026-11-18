@@ -46,6 +46,31 @@ enum LengthFit {
     }
 }
 
+extension LengthFit {
+    /// Rounds step lengths to multiples of `unit` seconds (at least one unit each), then moves the
+    /// difference one unit at a time to the longest steps so the total stays exactly `total`.
+    /// Returns nil when that isn't possible (total not a multiple of the unit, or too many steps).
+    static func snapped(_ seconds: [Int], to total: Int, unit: Int = 30) -> [Int]? {
+        guard total % unit == 0, !seconds.isEmpty, seconds.count * unit <= total else { return nil }
+        var result = seconds.map { max(unit, (($0 + unit / 2) / unit) * unit) }
+        var diff = total - result.reduce(0, +)
+        var turns = 0
+        while diff != 0, turns < 10_000 {
+            turns += 1
+            if diff > 0 {
+                let i = result.indices.max { result[$0] < result[$1] }!
+                result[i] += unit
+                diff -= unit
+            } else {
+                guard let i = result.indices.filter({ result[$0] > unit }).max(by: { result[$0] < result[$1] }) else { return nil }
+                result[i] -= unit
+                diff += unit
+            }
+        }
+        return diff == 0 ? result : nil
+    }
+}
+
 /// A length asked for in text.
 enum LengthRequest: Equatable {
     case total(minutes: Int)      // "make it an hour"

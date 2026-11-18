@@ -8,7 +8,7 @@ struct SessionSample: Codable, Hashable {
 }
 
 /// Collects a sample every 5 seconds while a workout or treadmill session runs.
-struct SampleLog {
+struct SampleLog: Codable {
     private(set) var samples: [SessionSample] = []
     private var lastT = -5
 
@@ -45,6 +45,8 @@ struct WorkoutSummary: Codable, Hashable {
     static let maxSamples = 120
     static let defaultWeightLb = 170.0
     static let weightKey = "bodyWeightLb"
+    /// Setup switch: calories are left to Apple Fitness on the watch when off
+    static let showCaloriesKey = "showCalories"
 
     /// Body weight set in Setup (pounds), or the default.
     static var storedWeightLb: Double {

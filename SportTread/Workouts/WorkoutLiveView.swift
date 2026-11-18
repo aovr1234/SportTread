@@ -173,6 +173,16 @@ struct WorkoutLiveView: View {
             if runner.checkInDue { checkInCard.transition(.move(edge: .top).combined(with: .opacity)) }
             if let offer = runner.offer { offerBanner(offer).transition(.move(edge: .top).combined(with: .opacity)) }
             if let notice = runner.editNotice { noticeCard(notice).transition(.move(edge: .top).combined(with: .opacity)) }
+            if let welcome = runner.recoveryNotice {
+                HStack(spacing: 10) {
+                    Image(systemName: "arrow.clockwise.circle.fill").foregroundStyle(Theme.lime)
+                    Text(welcome).font(.subheadline.weight(.semibold)).lineLimit(2)
+                    Spacer(minLength: 0)
+                }
+                .padding(12)
+                .glassCard(cornerRadius: 18, tint: Theme.lime)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
             if let problem = treadmill.commandProblem {
                 HStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
@@ -414,6 +424,8 @@ private struct CoachSheet: View {
             Spacer(minLength: 0)
         }
         .padding()
+        .contentShape(Rectangle())
+        .onTapGesture { hideKeyboard() }
         .onChange(of: speech.transcript) { _, text in
             if !text.isEmpty { request = text }
         }

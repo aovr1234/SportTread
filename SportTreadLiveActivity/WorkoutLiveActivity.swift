@@ -120,6 +120,7 @@ struct WorkoutLiveActivity: Widget {
                     VStack(spacing: 6) {
                         Countdown(state: state).font(.title2.weight(.heavy).monospacedDigit())
                         ProgressView(value: state.progress).tint(volt)
+                        if state.checkIn == true { CheckInButtons() }
                         if state.finished == nil { ControlButtons(paused: state.paused) }
                     }
                 }
@@ -166,6 +167,7 @@ private struct LockScreenView: View {
                 if let next = state.nextLabel {
                     Text("Next: \(next)").font(.caption).foregroundStyle(.secondary)
                 }
+                if state.checkIn == true { CheckInButtons() }
                 ControlButtons(paused: state.paused)
             }
         }
@@ -193,6 +195,26 @@ private func figureSymbol(mph: Double, incline: Double) -> String {
     if mph < 0.1 { return "figure.stand" }
     if mph >= 4.0 { return "figure.run" }
     return incline >= 5 ? "figure.hiking" : "figure.walk"
+}
+
+/// "How's it feeling?" while a check-in waits: answered here like the card in the app.
+private struct CheckInButtons: View {
+    var body: some View {
+        VStack(spacing: 6) {
+            Text("How's it feeling?").font(.caption.weight(.semibold)).foregroundStyle(volt)
+            HStack(spacing: 8) {
+                ForEach(["Easy", "Good", "Hard"], id: \.self) { feeling in
+                    Button(intent: LiveCheckInIntent(feeling: feeling)) {
+                        Text(feeling)
+                            .font(.subheadline.weight(.bold))
+                            .frame(maxWidth: .infinity, minHeight: 32)
+                            .background(Color.white.opacity(0.15), in: Capsule())
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
 }
 
 /// Speed -/+, pause or resume (workouts only) and STOP. They run inside the app, so the app must still be

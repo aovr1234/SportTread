@@ -192,6 +192,11 @@ struct RingProgress: View {
     }
 }
 
+/// Hides the keyboard (the Done button above it and tapping outside a text box use this).
+func hideKeyboard() {
+    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+}
+
 /// Thin gradient progress bar.
 struct GradientBar: View {
     let progress: Double

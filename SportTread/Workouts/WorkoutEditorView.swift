@@ -73,6 +73,7 @@ struct WorkoutEditorView: View {
                 }
             }
             .sportList()
+            .scrollDismissesKeyboard(.immediately)
             .navigationTitle(original == nil ? "New workout" : "Edit workout")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -83,8 +84,12 @@ struct WorkoutEditorView: View {
                     Button("Save") { save() }
                         .disabled(!workout.problems.isEmpty || workout.name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
-                ToolbarItem(placement: .bottomBar) {
+                ToolbarItem(placement: .topBarTrailing) {
                     EditButton()
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { hideKeyboard() }.fontWeight(.semibold)
                 }
             }
         }
@@ -109,9 +114,11 @@ private struct StepEditorRow: View {
     @Binding var step: WorkoutStep
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 14) {
             TextField("Label", text: $step.label).font(.subheadline.weight(.semibold))
-            Stepper(value: $step.seconds, in: 30...3600, step: 30) {
+            // Moves to the next 30 s mark, so an odd length like 5:25 becomes 5:30 on the first tap
+            Stepper(onIncrement: { step.seconds = min(3600, (step.seconds / 30 + 1) * 30) },
+                    onDecrement: { step.seconds = max(30, ((step.seconds + 29) / 30 - 1) * 30) }) {
                 Label(durationText(step.seconds), systemImage: "clock").font(.subheadline.monospacedDigit())
             }
             Stepper(value: $step.mph, in: TreadmillController.minMph...TreadmillController.maxMph, step: 0.1) {
@@ -121,7 +128,7 @@ private struct StepEditorRow: View {
                 Label(String(format: "%.1f%%", step.incline), systemImage: "arrow.up.right").font(.subheadline.monospacedDigit())
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 8)
     }
 }
 

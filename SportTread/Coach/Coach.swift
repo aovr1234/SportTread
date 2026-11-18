@@ -32,12 +32,17 @@ final class Coach: ObservableObject {
         if #available(iOS 26.0, *), AppleIntelligence.isAvailable {
             do {
                 let made = try await AppleIntelligence.workout(for: resolved, history: history)
-                let safe = SafetyCheck.repair(made, totalMinutes: resolved.minutes)
+                let safe = SafetyCheck.snapped(SafetyCheck.repair(made, totalMinutes: resolved.minutes))
                 if safe.problems.isEmpty, safe.totalSeconds == resolved.minutes * 60 {
-                    note = "Created with Apple Intelligence"
-                    return safe
+                    if resolved.minutes >= 20, SafetyCheck.isFlat(safe.steps) {
+                        note = "Apple Intelligence's workout was one flat pace, so the built-in rules made this one."
+                    } else {
+                        note = "Created with Apple Intelligence"
+                        return safe
+                    }
+                } else {
+                    note = "Apple Intelligence's workout didn't pass the safety check, so the built-in rules made this one."
                 }
-                note = "Apple Intelligence's workout didn't pass the safety check, so the built-in rules made this one."
             } catch {
                 note = "Apple Intelligence couldn't create it (\(error.localizedDescription)), so the built-in rules made this one."
             }
@@ -110,7 +115,12 @@ enum AppleIntelligence {
         You are a friendly treadmill coach. You design one treadmill workout as a list of timed steps.
         Rules:
         - The steps' seconds must add up to the requested total time.
-        - Start with a warm-up of 3 to 5 minutes and end with a cool-down of about 3 minutes.
+        - Start with a warm-up of 3 to 5 minutes in two steps that ramp up (for example 2.0 then 2.5 mph),
+          and end with a cool-down of about 3 minutes in two steps that ramp down.
+        - The main part is never one flat step: use at least 3 blocks of 5 to 10 minutes that differ in
+          speed (by 0.2 to 0.5 mph) or in incline (0 to 3 percent). Never give every step the same speed and incline.
+        - If the person is sore, tired or asks for easy, keep the incline at 0 and vary only the speed a little.
+        - Make step lengths whole minutes (multiples of 60 seconds), except interval steps.
         - Speeds are in miles per hour. Walking is about 2.5 to 3.8 mph, jogging about 4 to 6 mph.
           Stay close to the person's comfortable speed and never go above 10 mph.
         - Incline is 0 to 10 percent.

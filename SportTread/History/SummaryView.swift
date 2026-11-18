@@ -9,6 +9,7 @@ struct SummaryBlock: View {
     /// Every other history entry, for "compared with last time" and personal bests
     let others: [HistoryEntry]
     var compact = true
+    @AppStorage(WorkoutSummary.showCaloriesKey) private var showCalories = true
 
     private var summary: WorkoutSummary? { entry.summary }
 
@@ -21,7 +22,11 @@ struct SummaryBlock: View {
                     cell(String(format: "%.1f", summary.avgMph), "avg mph")
                     cell(WorkoutSummary.paceText(summary.paceSeconds), "min / mile")
                     cell(String(format: "%.0f", summary.elevationFeet), "ft climbed")
-                    cell("~\(summary.calories)", "kcal (est.)")
+                    if showCalories {
+                        cell("~\(summary.calories)", "kcal (est.)")
+                    } else {
+                        cell(String(format: "%.1f", summary.topMph), "top mph")
+                    }
                     cell(String(format: "%.1f%%", summary.avgIncline), "avg incline")
                 }
                 if summary.samples.count >= 3 { charts(summary) }

@@ -3,7 +3,11 @@ import Foundation
 /// Predictable edits to the remaining steps of a running workout: no UI, no AI. Tested on every build
 /// (Tests/LengthTests/main.swift).
 enum WorkoutEdits {
-    static func isCooldown(_ step: WorkoutStep) -> Bool { step.label.lowercased().contains("cool") }
+    /// The cool-down: the "Cool-down" step and the "Ease out" step before it (live edits never touch them)
+    static func isCooldown(_ step: WorkoutStep) -> Bool {
+        let label = step.label.lowercased()
+        return label.contains("cool") || label.contains("ease out")
+    }
 
     static func seconds(_ steps: [WorkoutStep]) -> Int { steps.reduce(0) { $0 + $1.seconds } }
 

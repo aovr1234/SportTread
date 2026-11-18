@@ -14,6 +14,8 @@ struct ContentView: View {
     @State private var confirmingDelete = false
     @State private var testActivity = WorkoutActivity()
     @AppStorage(WorkoutSummary.weightKey) private var weightLb = WorkoutSummary.defaultWeightLb
+    @AppStorage(WorkoutSummary.showCaloriesKey) private var showCalories = true
+    @ObservedObject private var diagnostics = DiagnosticsLog.shared
 
     private func backUp() {
         guard let file = dataFolder.makeBackupFile() else { return }
@@ -36,11 +38,34 @@ struct ContentView: View {
         NavigationStack {
             List {
                 Section {
-                    Stepper("\(Int(weightLb)) lb", value: $weightLb, in: 80...400, step: 1)
+                    Toggle("Show calories", isOn: $showCalories)
+                    if showCalories {
+                        Stepper("\(Int(weightLb)) lb", value: $weightLb, in: 80...400, step: 1)
+                    }
                 } header: {
-                    Text("Body weight")
+                    Text("Calories")
                 } footer: {
-                    Text("Used only for the calorie estimate on the workout summary (an estimate, usually within about 15%).")
+                    Text(showCalories
+                         ? "An estimate from speed, incline and your weight (usually within about 15%). Turn it off if you'd rather use Apple Fitness on your watch."
+                         : "Calories are hidden everywhere. The numbers are still saved with each session, so turning this back on shows them.")
+                }
+
+                Section {
+                    if diagnostics.recent.isEmpty {
+                        Text("Nothing logged yet.").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(diagnostics.recent.suffix(12).enumerated()), id: \.offset) { _, line in
+                            Text(line).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                        }
+                    }
+                    ShareLink(item: diagnostics.fileURL) {
+                        Label("Share log", systemImage: "square.and.arrow.up")
+                    }
+                    Button("Clear log", role: .destructive) { diagnostics.clear() }
+                } header: {
+                    Text("Diagnostics")
+                } footer: {
+                    Text("Connections, commands, workout steps and why iOS closed the app (iOS reports that once a day). Stays on this iPhone unless you share it. Also in Files › SportTread › diagnostics.log.")
                 }
 
                 Section {

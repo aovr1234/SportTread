@@ -78,6 +78,9 @@ final class WorkoutRunner: ObservableObject {
     private var beltStartedAt = Date.distantPast
     private var lastNotedProblem: String?
     private var sampleLog = SampleLog()
+    private var lastSaveAt = Date.distantPast
+    /// Shown for a few seconds after a workout was picked up again following an app restart
+    @Published private(set) var recoveryNotice: String?
 
     // Deviation detection: what the treadmill should be doing right now
     private var expectedMph = 0.0
@@ -88,6 +91,7 @@ final class WorkoutRunner: ObservableObject {
 
     init(treadmill: TreadmillController) {
         self.treadmill = treadmill
+        if let saved = Self.loadSavedRun() { recover(saved) }
     }
 
     var isActive: Bool {
@@ -164,6 +168,8 @@ final class WorkoutRunner: ObservableObject {
         phase = .starting
         activity.start(name: workout.name, totalSeconds: workout.totalSeconds, state: activityState())
         // If the belt is already running (started by hand), keep it going and just apply step 1
+        dlog("Workout started: \(workout.name), \(Self.clock(workout.totalSeconds))")
+        saveRun()
         launch(startBelt: !treadmill.isRunning)
     }
 
@@ -174,6 +180,8 @@ final class WorkoutRunner: ObservableObject {
         treadmill.stop()
         phase = .paused(reason)
         note(.pause, reason)
+        dlog("Workout paused: \(reason)")
+        saveRun()
         activity.update(activityState())
     }
 
@@ -185,6 +193,8 @@ final class WorkoutRunner: ObservableObject {
         }
         phase = .starting
         note(.resume, "resumed")
+        dlog("Workout resumed")
+        saveRun()
         activity.update(activityState())
         launch(startBelt: true, resuming: true)
     }
@@ -294,6 +304,7 @@ final class WorkoutRunner: ObservableObject {
         }
         activity.update(activityState())
 
+        saveRun()
         let notice = EditNotice(text: "Workout length \(Self.clock(after)), was \(Self.clock(before))")
         editNotice = notice
         Task {
@@ -329,6 +340,7 @@ final class WorkoutRunner: ObservableObject {
         checkInDue = false
         lastCheckInAt = totalElapsed
         note(.checkIn, feeling.lowercased())
+        activity.update(activityState())
         guard let current = currentStep else { return }
         switch feeling {
         case "Hard":
@@ -349,6 +361,7 @@ final class WorkoutRunner: ObservableObject {
     func dismissCheckIn() {
         checkInDue = false
         lastCheckInAt = totalElapsed
+        activity.update(activityState())
     }
 
     func dismissOffer() {
@@ -427,6 +440,7 @@ final class WorkoutRunner: ObservableObject {
             stepElapsed += delta
             totalElapsed += delta
             sampleLog.add(elapsed: totalElapsed, mph: treadmill.speedMph ?? 0, incline: treadmill.incline ?? 0)
+            if now.timeIntervalSince(lastSaveAt) >= 10 { saveRun() }
             let checkInMinutes = UserDefaults.standard.integer(forKey: Self.checkInKey)
             if checkInMinutes > 0, !checkInDue, offer == nil,
                totalElapsed - lastCheckInAt >= Double(checkInMinutes * 60), !remainingSteps.isEmpty {
@@ -484,6 +498,10 @@ final class WorkoutRunner: ObservableObject {
         if stepIndex >= workout.steps.count {
             stepIndex = workout.steps.count - 1
             finish("Workout complete")
+        } else {
+            let step = workout.steps[stepIndex]
+            dlog(String(format: "Step %d of %d: %@, %.1f mph, %.1f%%", stepIndex + 1, workout.steps.count, step.label, step.mph, step.incline))
+            saveRun()
         }
     }
 
@@ -607,6 +625,134 @@ final class WorkoutRunner: ObservableObject {
             note: "\(done) the rest by \(amount) mph"))
     }
 
+    // MARK: Autosave and recovery
+
+    /// What is saved every 10 seconds (and at every step, pause, resume and edit) so that a workout survives
+    /// iOS closing and relaunching the app. Times are wall-clock based: see `finishRecovery`.
+    private struct SavedRun: Codable {
+        var workout: Workout
+        var stepIndex: Int
+        var stepElapsed: Double
+        var totalElapsed: Double
+        var deviations: [Deviation]
+        var originalSeconds: Int
+        var peakMph: Double
+        var peakIncline: Double
+        var samples: SampleLog
+        var miles: Double
+        var lastMph: Double
+        var wasRunning: Bool
+        var savedAt: Date
+    }
+
+    private static var savedRunURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("activeWorkout.json")
+    }
+
+    /// A saved workout younger than 4 hours; older ones are deleted.
+    private static func loadSavedRun() -> SavedRun? {
+        guard let data = try? Data(contentsOf: savedRunURL) else { return nil }
+        guard let saved = try? JSONDecoder().decode(SavedRun.self, from: data),
+              Date().timeIntervalSince(saved.savedAt) < 4 * 3600 else {
+            try? FileManager.default.removeItem(at: savedRunURL)
+            return nil
+        }
+        return saved
+    }
+
+    static var hasSavedRun: Bool { loadSavedRun() != nil }
+
+    private func saveRun() {
+        guard isActive, let workout else { return }
+        lastSaveAt = Date()
+        let saved = SavedRun(
+            workout: workout, stepIndex: stepIndex, stepElapsed: stepElapsed, totalElapsed: totalElapsed,
+            deviations: deviations, originalSeconds: originalSeconds, peakMph: peakMph, peakIncline: peakIncline,
+            samples: sampleLog, miles: treadmill.miles, lastMph: treadmill.speedMph ?? 0,
+            wasRunning: phase == .running, savedAt: Date())
+        if let data = try? JSONEncoder().encode(saved) { try? data.write(to: Self.savedRunURL, options: .atomic) }
+    }
+
+    private func clearSavedRun() {
+        try? FileManager.default.removeItem(at: Self.savedRunURL)
+    }
+
+    /// The app was relaunched while a workout was running: bring it back on screen at once, then work out
+    /// what the belt did in the meantime.
+    private func recover(_ saved: SavedRun) {
+        workout = saved.workout
+        stepIndex = min(saved.stepIndex, max(0, saved.workout.steps.count - 1))
+        stepElapsed = saved.stepElapsed
+        totalElapsed = saved.totalElapsed
+        deviations = saved.deviations
+        originalSeconds = saved.originalSeconds
+        peakMph = saved.peakMph
+        peakIncline = saved.peakIncline
+        sampleLog = saved.samples
+        treadmill.workoutActive = true  // keeps treadmill mode from starting its own session
+        treadmill.restoreStats(miles: saved.miles, movingSeconds: saved.totalElapsed)
+        phase = .paused("Recovering your workout… reconnecting to the treadmill.")
+        dlog("Recovering a saved workout: \(saved.workout.name), step \(saved.stepIndex + 1), "
+             + "\(Int(saved.totalElapsed)) s in, saved \(Int(Date().timeIntervalSince(saved.savedAt))) s ago, "
+             + (saved.wasRunning ? "it was running" : "it was paused"))
+        if !activity.adopt() {
+            activity.start(name: saved.workout.name, totalSeconds: saved.workout.totalSeconds, state: activityState())
+        }
+        loop = Task { await finishRecovery(saved) }
+    }
+
+    private func finishRecovery(_ saved: SavedRun) async {
+        for _ in 0..<240 {  // the Bluetooth connection comes back by itself; wait up to a minute
+            if Task.isCancelled { return }
+            if treadmill.isReady, treadmill.speedMph != nil { break }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        if Task.isCancelled { return }
+        guard treadmill.isReady, treadmill.speedMph != nil else {
+            phase = .paused("The app was restarted and the treadmill isn't connected. Connect, then Resume.")
+            note(.connection, "app restarted by iOS; treadmill not reconnected")
+            dlog("Recovery: the treadmill didn't reconnect within a minute")
+            saveRun()
+            activity.update(activityState())
+            return
+        }
+        let gap = max(0, Date().timeIntervalSince(saved.savedAt))
+        if saved.wasRunning, treadmill.isRunning {
+            // The belt is still moving, so the time since the last save counts as running time.
+            // That is exact if it ran the whole time; if it was stopped and restarted on the console
+            // in between, the time is a little long.
+            stepElapsed += gap
+            totalElapsed += gap
+            treadmill.restoreStats(miles: saved.miles + saved.lastMph * gap / 3600, movingSeconds: totalElapsed)
+            while let step = currentStep, stepElapsed >= Double(step.seconds) {
+                stepElapsed -= Double(step.seconds)
+                if stepIndex + 1 >= (workout?.steps.count ?? 0) {
+                    note(.connection, "app restarted by iOS; the workout ended while it was away")
+                    dlog("Recovery: the workout ran out while the app was away")
+                    finish("Workout complete")
+                    return
+                }
+                stepIndex += 1
+            }
+            note(.connection, "app restarted by iOS; recovered after \(Int(gap)) s")
+            dlog("Recovery: belt still running, counted \(Int(gap)) s, now step \(stepIndex + 1), \(Int(totalElapsed)) s in")
+            let notice = "Welcome back. Your workout kept going: \(Self.clock(Int(totalElapsed))) in."
+            recoveryNotice = notice
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                if recoveryNotice == notice { recoveryNotice = nil }
+            }
+            phase = .starting
+            launch(startBelt: false)
+        } else {
+            phase = .paused("Recovered after the app restarted. Resume, or End workout to finish.")
+            note(.connection, "app restarted by iOS; recovered paused")
+            dlog("Recovery: belt stopped or workout was paused, recovered as paused")
+        }
+        saveRun()
+        activity.update(activityState())
+    }
+
     // MARK: Live Activity and finishing
 
     private func activityState() -> WorkoutActivity.State {
@@ -619,12 +765,15 @@ final class WorkoutRunner: ObservableObject {
             progress: progress,
             paused: phase != .running,
             nextLabel: nextStep?.label,
-            finished: nil)
+            finished: nil,
+            checkIn: checkInDue ? true : nil)
     }
 
     private func finish(_ reason: String) {
         loop?.cancel()
         loop = nil
+        clearSavedRun()
+        dlog("Workout finished: \(reason), \(Int(totalElapsed)) s, \(String(format: "%.2f", treadmill.miles)) mi")
         treadmill.zeroInclineAndStop()
         treadmill.workoutActive = false
         phase = .finished(reason)

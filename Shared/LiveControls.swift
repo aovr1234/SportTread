@@ -4,6 +4,7 @@ import Foundation
 /// What the Live Activity buttons can ask the app to do.
 enum LiveCommand {
     case speedUp, speedDown, pauseResume, stop
+    case checkIn(String)
 }
 
 /// The app sets `handler` when it launches. The Live Activity buttons run these intents inside the app's
@@ -43,6 +44,25 @@ struct LivePauseResumeIntent: LiveActivityIntent {
     @MainActor
     func perform() async throws -> some IntentResult {
         LiveControl.handler?(.pauseResume)
+        return .result()
+    }
+}
+
+struct LiveCheckInIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Answer the check-in"
+
+    @Parameter(title: "Feeling")
+    var feeling: String
+
+    init() {}
+
+    init(feeling: String) {
+        self.feeling = feeling
+    }
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        LiveControl.handler?(.checkIn(feeling))
         return .result()
     }
 }

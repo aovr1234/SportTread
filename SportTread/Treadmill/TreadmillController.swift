@@ -43,10 +43,14 @@ final class TreadmillController: NSObject, ObservableObject {
     /// The history entry of the last ended treadmill-mode session (with its full summary); the Treadmill tab shows it
     @Published var lastSessionEntry: HistoryEntry?
     private var sessionLog = SampleLog()
+    /// No treadmill-mode session (and Live Activity) opens before this time
+    private var manualBlockedUntil = Date.distantPast
 
     /// Set by the workout runner while a workout runs; treadmill-mode tracking pauses meanwhile.
     var workoutActive = false {
         didSet {
+            // The belt still reads moving for a second or two after a workout ends; that must not open a session
+            if !workoutActive { manualBlockedUntil = Date().addingTimeInterval(15) }
             guard workoutActive, sessionActive else { return }
             manualActivity.end()
             sessionActive = false
@@ -62,18 +66,6 @@ final class TreadmillController: NSObject, ObservableObject {
         let notBefore: Date
     }
 
-    /// A speed or incline the app wants, kept until the treadmill's readings confirm it.
-    /// The console sometimes accepts an incline and then drops it (seen after Start, with no refusal),
-    /// so a command whose reading falls back to the old value is sent again (up to 3 more times).
-    private struct Want {
-        var value: Double
-        var sends = 0
-        var sentAt = Date.distantFuture
-        /// The reading when the command first went out; a reading that falls back to it means it didn't take
-        var before = 0.0
-        var watchUntil = Date.distantFuture
-    }
-
     private let service = CBUUID(string: TreadmillProtocol.serviceUUID)
     private let txID = CBUUID(string: TreadmillProtocol.txUUID)
     private let rxID = CBUUID(string: TreadmillProtocol.rxUUID)
@@ -83,15 +75,8 @@ final class TreadmillController: NSObject, ObservableObject {
     private var tx: CBCharacteristic?
     private var session: Task<Void, Never>?
     private var queue: [Job] = []
-    // Speed and incline: at most one send per second each (the latest value wins), one command per poll message
-    private var pendingSpeed: Double?
-    private var pendingIncline: Double?
-    private var wantSpeed: Want?
-    private var wantIncline: Want?
-    private var lastSpeedSend = Date.distantPast
-    private var lastInclineSend = Date.distantPast
-    private var startedAt = Date.distantPast
-    private static let cooldown: TimeInterval = 1
+    /// Speed and incline commands: pacing, checking and resending (see CommandPacer)
+    private var pacer = CommandPacer()
     private var pendingWrite: CheckedContinuation<Void, Never>?
     private var pendingWriteID = 0
     private var lastStatusAt: Date?
@@ -121,6 +106,7 @@ final class TreadmillController: NSObject, ObservableObject {
 
     func connect() {
         lastEvent = ""
+        dlog("Connect requested")
         UserDefaults.standard.set(true, forKey: Self.wasConnectedKey)
         if let central, central.state == .poweredOn {
             if let peripheral { reconnect(peripheral, reason: nil) } else { scan() }
@@ -135,6 +121,7 @@ final class TreadmillController: NSObject, ObservableObject {
     }
 
     func disconnect() {
+        dlog("Disconnect requested")
         UserDefaults.standard.set(false, forKey: Self.wasConnectedKey)
         guard isRunning else {
             teardown(reason: "Disconnected")
@@ -164,6 +151,7 @@ final class TreadmillController: NSObject, ObservableObject {
         central?.stopScan()
         state = .disconnected
         lastEvent = reason
+        dlog("Disconnected for good: \(reason)")
     }
 
     /// Drops the current session and keeps trying to reconnect to the same treadmill.
@@ -172,6 +160,7 @@ final class TreadmillController: NSObject, ObservableObject {
         resetSession()
         state = .reconnecting
         if let reason { lastEvent = reason }
+        dlog("Reconnecting: \(reason ?? "link dropped")")
         central?.connect(peripheral)
     }
 
@@ -192,10 +181,7 @@ final class TreadmillController: NSObject, ObservableObject {
     /// Drops everything waiting to be sent, and stops checking earlier commands.
     private func clearCommands() {
         queue.removeAll()
-        pendingSpeed = nil
-        pendingIncline = nil
-        wantSpeed = nil
-        wantIncline = nil
+        pacer.clear()
     }
 
     /// Starts the belt (the console starts at 1.0 mph). `resetStats: false` keeps time and distance
@@ -206,7 +192,7 @@ final class TreadmillController: NSObject, ObservableObject {
         if resetStats { self.resetStats() }
         clearCommands()
         commandProblem = nil
-        startedAt = Date()
+        pacer.markStart(Date())
         targetMph = (1.0, Date())
         enqueue("Start", TreadmillProtocol.startFrames)
         if setSpeed {
@@ -228,6 +214,7 @@ final class TreadmillController: NSObject, ObservableObject {
         guard isReady else { return }
         clearCommands()
         commandProblem = nil
+        manualBlockedUntil = Date().addingTimeInterval(15)
         targetMph = nil
         targetIncline = (0, Date().addingTimeInterval(2))
         enqueue("Stop", TreadmillProtocol.stopFrames)
@@ -254,8 +241,7 @@ final class TreadmillController: NSObject, ObservableObject {
         }
         targetMph = (value, Date())
         commandProblem = nil
-        pendingSpeed = value  // sent at the next poll gap, at most once a second; a newer tap replaces it
-        wantSpeed = Want(value: value)
+        pacer.requestSpeed(value)  // sent at the next poll gap, at most once a second; a newer tap replaces it
     }
 
     /// The speed the belt is set to (the last command if it is recent, else the reading).
@@ -273,8 +259,7 @@ final class TreadmillController: NSObject, ObservableObject {
         }
         targetIncline = (value, Date())
         commandProblem = nil
-        pendingIncline = value
-        wantIncline = Want(value: value)
+        pacer.requestIncline(value)
     }
 
     func changeIncline(by delta: Double) {
@@ -288,6 +273,12 @@ final class TreadmillController: NSObject, ObservableObject {
 
     private func enqueue(_ label: String, _ frames: [Data], after delay: TimeInterval = 0) {
         queue.append(Job(label: label, frames: frames, notBefore: Date().addingTimeInterval(delay)))
+    }
+
+    /// After the app was relaunched in the middle of a workout: puts the workout's distance and time back.
+    func restoreStats(miles: Double, movingSeconds: TimeInterval) {
+        self.miles = miles
+        self.movingSeconds = movingSeconds
     }
 
     func resetStats() {
@@ -308,7 +299,7 @@ final class TreadmillController: NSObject, ObservableObject {
     }
 
     private func updateManualSession(now: Date) {
-        guard !workoutActive else { return }
+        guard !workoutActive, now >= manualBlockedUntil else { return }
         if isRunning {
             stoppedSince = nil
             if !sessionActive {
@@ -368,11 +359,13 @@ final class TreadmillController: NSObject, ObservableObject {
             state = .ready
             readySince = Date()
             lastEvent = "Connected"
+            dlog("Connected, handshake done")
             var index = 0
             while !Task.isCancelled {
                 // Watchdog: a link that looks connected but sends nothing gets reset
                 let heardFrom = lastStatusAt ?? readySince ?? Date()
                 if Date().timeIntervalSince(heardFrom) > Self.silenceLimit, let peripheral {
+                    dlog("Watchdog: no status for 10 s")
                     reconnect(peripheral, reason: "No data from the treadmill for 10 s. Reconnecting…")
                     central?.cancelPeripheralConnection(peripheral)
                     return
@@ -381,6 +374,7 @@ final class TreadmillController: NSObject, ObservableObject {
                 // is followed by a full poll message, so quick taps can never starve the status polling.
                 if index % 3 == 0, let job = takeNextJob(now: Date()) {
                     lastEvent = job.label
+                    dlog("Sent: \(job.label)")
                     for frame in job.frames {
                         await write(frame)
                         try? await Task.sleep(for: .milliseconds(200))
@@ -394,75 +388,26 @@ final class TreadmillController: NSObject, ObservableObject {
     }
 
     /// The next command to send: a queued job that is due (Stop and Start first, even if an earlier job
-    /// isn't due yet), then the latest speed, then the latest incline, each at most once a second.
+    /// isn't due yet), then the latest speed, then the latest incline (see CommandPacer).
     private func takeNextJob(now: Date) -> Job? {
         if let i = queue.firstIndex(where: { now >= $0.notBefore }) {
             return queue.remove(at: i)
         }
-        if let mph = pendingSpeed, now.timeIntervalSince(lastSpeedSend) >= Self.cooldown {
-            pendingSpeed = nil
-            lastSpeedSend = now
-            if var want = wantSpeed, abs(want.value - mph) < 0.001 {
-                if want.sends == 0 { want.before = speedMph ?? 0 }
-                want.sends += 1
-                want.sentAt = now
-                want.watchUntil = max(now.addingTimeInterval(8), startedAt.addingTimeInterval(12))
-                wantSpeed = want
-            }
+        switch pacer.next(now: now, speedReading: speedMph, inclineReading: incline) {
+        case .speed(let mph)?:
             return Job(label: String(format: "Speed %.1f mph", mph), frames: TreadmillProtocol.speedFrames(mph: mph), notBefore: now)
-        }
-        if let percent = pendingIncline, now.timeIntervalSince(lastInclineSend) >= Self.cooldown {
-            pendingIncline = nil
-            lastInclineSend = now
-            if var want = wantIncline, abs(want.value - percent) < 0.001 {
-                if want.sends == 0 { want.before = incline ?? 0 }
-                want.sends += 1
-                want.sentAt = now
-                want.watchUntil = max(now.addingTimeInterval(8), startedAt.addingTimeInterval(12))
-                wantIncline = want
-            }
+        case .incline(let percent)?:
             return Job(label: String(format: "Incline %.1f%%", percent), frames: TreadmillProtocol.inclineFrames(percent: percent), notBefore: now)
-        }
-        return nil
-    }
-
-    /// Compares the readings with what was commanded. A reading that went back to the value from before
-    /// the command means the console dropped it, so the command is sent again (up to 3 more times).
-    /// A reading that moved somewhere else is a change made on the console and is left alone.
-    private func verifyCommands(now: Date) {
-        if let want = wantSpeed, want.sentAt != .distantFuture {
-            let reading = speedMph ?? 0
-            if now > want.watchUntil {
-                wantSpeed = nil
-            } else if pendingSpeed == nil, reading > 0, now.timeIntervalSince(want.sentAt) >= 3,
-                      abs(reading - want.value) >= 0.15, abs(reading - want.before) < 0.1 {
-                resend(speed: true, want: want)
-            }
-        }
-        if let want = wantIncline, want.sentAt != .distantFuture {
-            let reading = incline ?? 0
-            if now > want.watchUntil {
-                wantIncline = nil
-            } else if pendingIncline == nil, now.timeIntervalSince(want.sentAt) >= 2.5,
-                      abs(reading - want.value) >= 0.25, abs(reading - want.before) < 0.25 {
-                resend(speed: false, want: want)
-            }
+        case nil:
+            return nil
         }
     }
 
-    private func resend(speed: Bool, want: Want) {
-        if want.sends >= 4 {
-            if speed {
-                wantSpeed = nil
-                commandProblem = "Speed didn't take. Tap ▲ or ▼ to try again."
-            } else {
-                wantIncline = nil
-                commandProblem = "Incline didn't take. Tap ▲ or ▼ to try again."
-            }
-            lastEvent = commandProblem ?? ""
-            return
-        }
-        if speed { pendingSpeed = want.value } else { pendingIncline = want.value }
+    private func report(_ problem: String?) {
+        guard let problem else { return }
+        commandProblem = problem
+        lastEvent = problem
+        dlog("Gave up: \(problem)")
     }
 
     /// Write with response; continues on the console's acknowledgement or after 1 s.
@@ -492,10 +437,9 @@ final class TreadmillController: NSObject, ObservableObject {
         guard state == .ready else { return }  // handshake replies aren't status frames
         if let code = TreadmillProtocol.refusal(from: data) {
             lastEvent = "Treadmill refused a command (status \(String(format: "%02x", code)))"
+            dlog(lastEvent)
             // A refusal right after a speed or incline command: send that command again
-            let now = Date()
-            if let want = wantSpeed, pendingSpeed == nil, now.timeIntervalSince(want.sentAt) < 3 { resend(speed: true, want: want) }
-            if let want = wantIncline, pendingIncline == nil, now.timeIntervalSince(want.sentAt) < 3 { resend(speed: false, want: want) }
+            report(pacer.refused(now: Date()))
             return
         }
         guard let status = TreadmillProtocol.status(from: data) else { return }
@@ -516,10 +460,13 @@ final class TreadmillController: NSObject, ObservableObject {
             lastEvent = String(format: "Incline changed on the console: %.1f%%", status.incline)
         }
 
+        if (speedMph ?? 0) > 0 != (mph > 0) {
+            dlog(mph > 0 ? String(format: "Belt running at %.1f mph", mph) : "Belt stopped")
+        }
         lastStatusAt = now
         speedMph = mph
         incline = status.incline
-        verifyCommands(now: now)
+        report(pacer.verify(now: now, speedReading: mph, inclineReading: status.incline))
         updateManualSession(now: now)
     }
 }
@@ -559,6 +506,7 @@ extension TreadmillController: CBCentralManagerDelegate, CBPeripheralDelegate {
             peripheral = restored
             restored.delegate = self
             lastEvent = "Reconnecting after iOS restarted the app…"
+            dlog("iOS restored the Bluetooth connection: the app was relaunched")
         }
     }
 
@@ -601,6 +549,7 @@ extension TreadmillController: CBCentralManagerDelegate, CBPeripheralDelegate {
             if state == .reconnecting {
                 central.connect(peripheral)  // watchdog reset: try again right away
             } else {
+                dlog("Bluetooth connection lost: \(error?.localizedDescription ?? "no error given")")
                 reconnect(peripheral, reason: "Connection lost. Reconnecting… (console Stop always works)")
             }
         }

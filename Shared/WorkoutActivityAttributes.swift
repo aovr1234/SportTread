@@ -17,6 +17,8 @@ struct WorkoutActivityAttributes: ActivityAttributes {
         var nextLabel: String?
         /// Set when the workout is over, e.g. "Workout complete"
         var finished: String?
+        /// "How's it feeling?" is waiting for an answer (Easy / Good / Hard buttons show)
+        var checkIn: Bool?
     }
 
     var workoutName: String
