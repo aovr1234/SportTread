@@ -40,7 +40,7 @@ final class Coach: ObservableObject {
         if let readinessNote {
             resolved.notes += (resolved.notes.isEmpty ? "" : " ") + readinessNote + "."
         }
-        let comfortable = TemplateCoach.baseSpeed(history: history)
+        let comfortable = TemplateCoach.baseSpeed(history: history, heightInches: BodyProfile.stored.heightInches)
 
         // 1. Cloud AI, when it is on: each enabled service in turn, with up to two fix-ups each
         if let made = await createWithCloud(request: request, resolved: resolved, history: history, comfortable: comfortable) {
@@ -68,13 +68,13 @@ final class Coach: ObservableObject {
                 note = "Apple Intelligence couldn't create it (\(error.localizedDescription)), so the built-in rules made this one."
                 dlog("Coach: Apple Intelligence failed: \(error.localizedDescription); using the rules")
             }
-            return Self.logged(Self.exact(TemplateCoach.make(resolved, history: history), minutes: resolved.minutes))
+            return Self.logged(Self.exact(TemplateCoach.make(resolved, history: history, heightInches: BodyProfile.stored.heightInches), minutes: resolved.minutes))
         }
         #endif
 
         // 3. The built-in rules
         note = "Made with the built-in rules (Apple Intelligence: \(Self.appleIntelligenceStatus))."
-        return Self.logged(Self.exact(TemplateCoach.make(resolved, history: history), minutes: resolved.minutes))
+        return Self.logged(Self.exact(TemplateCoach.make(resolved, history: history, heightInches: BodyProfile.stored.heightInches), minutes: resolved.minutes))
     }
 
     /// Repairs an AI workout and decides whether it is good enough: the reason it was rejected, or nil.
@@ -242,7 +242,7 @@ enum AppleIntelligence {
     private static var loggedInstructions = false
 
     static func workout(for request: WorkoutRequest, history: [HistoryEntry]) async throws -> Workout {
-        let base = TemplateCoach.baseSpeed(history: history)
+        let base = TemplateCoach.baseSpeed(history: history, heightInches: BodyProfile.stored.heightInches)
         let prompt = WorkoutPrompt.request(request, base: base, history: history)
         let instructions = WorkoutPrompt.rules
         if !loggedInstructions {

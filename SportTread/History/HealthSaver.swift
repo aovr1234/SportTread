@@ -47,6 +47,49 @@ final class HealthSaver: ObservableObject {
         return true
     }
 
+    /// Fills Setup › About you from Apple Health: the latest weight and height and the date of birth (read-only).
+    func readBody() async -> String {
+        guard HKHealthStore.isHealthDataAvailable() else { return "Apple Health isn't available on this device." }
+        let types: Set<HKObjectType> = [HKQuantityType(.bodyMass), HKQuantityType(.height), HKCharacteristicType(.dateOfBirth)]
+        do {
+            try await store.requestAuthorization(toShare: [], read: types)
+        } catch {
+            return "Health access failed: \(error.localizedDescription)"
+        }
+        var found: [String] = []
+        if let kilos = await latest(.bodyMass, unit: .gramUnit(with: .kilo)) {
+            UserDefaults.standard.set((kilos * 2.20462262).rounded(), forKey: WorkoutSummary.weightKey)
+            found.append("weight")
+        }
+        if let meters = await latest(.height, unit: .meter()) {
+            UserDefaults.standard.set((meters * 39.3700787).rounded(), forKey: BodyProfile.heightKey)
+            found.append("height")
+        }
+        if let parts = try? store.dateOfBirthComponents(), let birth = Calendar.current.date(from: parts) {
+            let years = Calendar.current.dateComponents([.year], from: birth, to: Date()).year ?? 0
+            if years >= 10 {
+                UserDefaults.standard.set(years, forKey: BodyProfile.ageKey)
+                found.append("age")
+            }
+        }
+        dlog("Health: read \(found.isEmpty ? "nothing" : found.joined(separator: ", "))")
+        return found.isEmpty
+            ? "Health has no weight, height or birthday that this app can read. Enter them here."
+            : "Filled in: " + found.joined(separator: ", ") + "."
+    }
+
+    private func latest(_ id: HKQuantityTypeIdentifier, unit: HKUnit) async -> Double? {
+        await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: HKQuantityType(id), predicate: nil, limit: 1,
+                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)]
+            ) { _, samples, _ in
+                continuation.resume(returning: (samples?.first as? HKQuantitySample)?.quantity.doubleValue(for: unit))
+            }
+            store.execute(query)
+        }
+    }
+
     func save(_ entry: HistoryEntry) async {
         guard enabled, entry.seconds >= 30 else { return }
         var saved = UserDefaults.standard.stringArray(forKey: Self.savedKey) ?? []

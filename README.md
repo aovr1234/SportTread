@@ -2,7 +2,7 @@
 
 iPhone app that runs a ProForm 505 CST treadmill without iFit. See [PLAN.md](PLAN.md).
 
-## Current stage: build 0.8.0 (heart rate, heart-rate hold, Apple Health saving, incline choices, live coach on the cloud; 0.7.7: cloud AI for workouts with a fix-up loop, Easy interval limit; 0.7.6: the log shows what was asked and what the AI was told, interval quality check; 0.7.5: the chosen type is checked, warm-up and cool-down only at the ends; 0.7.4: shorter warm-up and cool-down; 0.7.3: diagnostics log, workout recovery, better workouts)
+## Current stage: build 0.9.0 (about you, heart-rate zones, the fitness test; 0.8.0: heart rate, heart-rate hold, Apple Health saving, incline choices, live coach on the cloud; 0.7.7: cloud AI for workouts with a fix-up loop, Easy interval limit; 0.7.6: the log shows what was asked and what the AI was told, interval quality check; 0.7.5: the chosen type is checked, warm-up and cool-down only at the ends; 0.7.4: shorter warm-up and cool-down; 0.7.3: diagnostics log, workout recovery, better workouts)
 Passed so far: milestones 0, 1, 2, 5, the Live Activity and two field tests. On hold: saving to Apple Health,
 heart rate (waits for the Bluetooth sensor), plan reminders and speed guards.
 
@@ -14,7 +14,7 @@ heart rate (waits for the Bluetooth sensor), plan reminders and speed guards.
 Every build first runs the length tests (`Tests/LengthTests`): every workout length from 10 to 90 minutes,
 simulated AI workouts, live edits and reading a length from text must come out exact, or the build fails.
 
-### Test (0.8.0 and earlier; the 0.7.2 list still applies: pacing, resume, summary, Live Activity buttons)
+### Test (0.9.0 and earlier; the 0.7.2 list still applies: pacing, resume, summary, Live Activity buttons)
 | # | Test | Pass when |
 |---|---|---|
 | 1 | Setup → Diagnostics | Lines appear as you use the app (connects, commands, steps); Share log sends `diagnostics.log`; Clear empties it |
@@ -48,6 +48,12 @@ simulated AI workouts, live edits and reading a length from text must come out e
 | 29 | Coach tab → Incline: None (or a note 'my legs are sore') | 0% in every step (hills excepted) |
 | 30 | Intervals, 60 min | About 10 pairs of 2:00 fast and 3:00 recovery, not 21 |
 | 31 | Live Coach during a workout: type 'Hello', then 'add some hills' | 'Hello' gets a reply and no change; hills are added to the whole rest of the workout, with the intervals keeping their lengths (the answer is no longer cut at 24 steps) |
+| 32 | Setup → About you | Height, age and maximum heart rate steppers; 'Fill weight, height and age from Apple Health' asks permission once and fills what Health has; the maximum shows 208 − 0.7 × age |
+| 33 | Setup → Fitness test (sensor on, treadmill connected, age entered) → Begin | 45 s standing still, then a 24-minute workout: warm-up, six 3-minute stages, cool-down; the stage speeds are around your comfortable speed (for 3.0: 2.2 to 4.2 mph) |
+| 34 | When the test ends | A card with your zones as heart rate and as mph, how well it fitted, and any stage that was still rising; Setup → Fitness test shows the last result |
+| 35 | Start the test and let your heart rate pass 92% of the maximum (or take the sensor off for 10 s) | It skips to the cool-down with a message (or pauses and asks you to check the armband) |
+| 36 | Workout → ✦ Coach → Heart rate: Suggest, pick a zone | Stay under the zone for 4 minutes (or over it for 2) and a harder or easier card appears; Hold has Z1 to Z5 buttons that set the target to the zone's middle |
+| 37 | Finished workout with the sensor on | A line 'Zones: Z2 12:40 · Z3 4:20' under the charts |
 
 Still to check from 0.7: the treadmill-mode Live Activity (ends 2 min after stopping), readiness, goal plans,
 the workout editor, and deleting history.

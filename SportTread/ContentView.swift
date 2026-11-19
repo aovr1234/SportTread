@@ -17,6 +17,10 @@ struct ContentView: View {
     @AppStorage(WorkoutSummary.showCaloriesKey) private var showCalories = true
     @ObservedObject private var diagnostics = DiagnosticsLog.shared
     @EnvironmentObject private var healthSaver: HealthSaver
+    @AppStorage(BodyProfile.heightKey) private var heightInches = 0.0
+    @AppStorage(BodyProfile.ageKey) private var age = 0
+    @AppStorage(BodyProfile.measuredMaxKey) private var measuredMax = 0
+    @State private var aboutStatus = ""
 
     private func backUp() {
         guard let file = dataFolder.makeBackupFile() else { return }
@@ -51,7 +55,51 @@ struct ContentView: View {
                          : "Calories are hidden everywhere. The numbers are still saved with each session, so turning this back on shows them.")
                 }
 
+                Section {
+                    LabeledContent("Height") {
+                        HStack {
+                            Text(heightInches < 40 ? "not set" : "\(Int(heightInches.rounded()) / 12)' \(Int(heightInches.rounded()) % 12)\"")
+                                .monospacedDigit()
+                            Stepper("Height", value: Binding(get: { heightInches < 40 ? 68 : heightInches }, set: { heightInches = $0 }),
+                                    in: 48...84, step: 1)
+                                .labelsHidden()
+                        }
+                    }
+                    LabeledContent("Age") {
+                        HStack {
+                            Text(age < 10 ? "not set" : "\(age)").monospacedDigit()
+                            Stepper("Age", value: Binding(get: { age < 10 ? 35 : age }, set: { age = $0 }), in: 14...90)
+                                .labelsHidden()
+                        }
+                    }
+                    LabeledContent("Maximum heart rate") {
+                        HStack {
+                            Text(BodyProfile.stored.maxHeartRate.map { "\($0)\(measuredMax >= 120 ? " (measured)" : "")" } ?? "needs your age")
+                                .monospacedDigit()
+                            Stepper("Maximum heart rate", value: Binding(get: { measuredMax < 120 ? 185 : measuredMax }, set: { measuredMax = $0 }),
+                                    in: 120...230)
+                                .labelsHidden()
+                        }
+                    }
+                    if measuredMax >= 120 {
+                        Button("Use the formula for my age instead") { measuredMax = 0 }
+                    }
+                    Button("Fill weight, height and age from Apple Health") {
+                        Task { aboutStatus = await healthSaver.readBody() }
+                    }
+                    if !aboutStatus.isEmpty {
+                        Text(aboutStatus).font(.footnote).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("About you")
+                } footer: {
+                    Text("Height sets where a new user's comfortable speed starts. Age gives your maximum heart rate (208 minus 0.7 times your age, unless you enter a measured one) and the five zones. Weight is under Calories.")
+                }
+                .listRowBackground(glassRow)
+
                 HeartRateSection()
+
+                FitnessTestSection()
 
                 Section {
                     Toggle("Save workouts to Apple Health", isOn: Binding(

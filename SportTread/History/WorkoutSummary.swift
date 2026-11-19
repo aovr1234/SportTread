@@ -44,6 +44,8 @@ struct WorkoutSummary: Codable, Hashable {
     /// Heart rate over the session, when a sensor was connected
     var avgBpm: Int? = nil
     var peakBpm: Int? = nil
+    /// Seconds in heart-rate zones 1 to 5 (when a sensor and a maximum heart rate were known)
+    var zoneSeconds: [Int]? = nil
     /// Readings for the chart (at most `maxSamples`)
     var samples: [SessionSample]
 
@@ -82,7 +84,8 @@ struct WorkoutSummary: Codable, Hashable {
 
     /// Builds the summary. `miles` and `movingSeconds` are the treadmill's own totals; the samples give
     /// the incline, elevation, calories and the chart.
-    static func make(samples: [SessionSample], miles: Double, movingSeconds: Int, weightLb: Double) -> WorkoutSummary {
+    static func make(samples: [SessionSample], miles: Double, movingSeconds: Int, weightLb: Double,
+                     zones: HeartZones? = nil) -> WorkoutSummary {
         let step = 5.0
         var topMph = 0.0
         var topIncline = 0.0
@@ -91,7 +94,12 @@ struct WorkoutSummary: Codable, Hashable {
         var elevation = 0.0
         var kcal = 0.0
         let kg = weightLb * 0.45359237
+        var zoneTime = [0, 0, 0, 0, 0]
         for sample in samples {
+            if let zones, let bpm = sample.bpm, bpm > 0 {
+                let zone = zones.zone(for: Double(bpm))
+                if zone >= 1 { zoneTime[zone - 1] += Int(step) }
+            }
             topMph = max(topMph, sample.mph)
             topIncline = max(topIncline, sample.incline)
             guard sample.mph > 0 else { continue }
@@ -111,6 +119,7 @@ struct WorkoutSummary: Codable, Hashable {
             weightLb: weightLb,
             avgBpm: beats.isEmpty ? nil : Int((Double(beats.reduce(0, +)) / Double(beats.count)).rounded()),
             peakBpm: beats.max(),
+            zoneSeconds: zones == nil || beats.isEmpty ? nil : zoneTime,
             samples: thinned(samples))
     }
 

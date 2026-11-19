@@ -4,9 +4,9 @@ import Foundation
 /// type and a comfortable base speed from recent history.
 enum TemplateCoach {
     /// Comfortable steady walking speed from recent workouts, nudged by the last effort rating.
-    static func baseSpeed(history: [HistoryEntry]) -> Double {
+    static func baseSpeed(history: [HistoryEntry], heightInches: Double? = nil) -> Double {
         let recent = history.suffix(5)
-        var base = 3.0
+        var base = BodyProfile.startingSpeed(heightInches: heightInches)
         if !recent.isEmpty {
             // Steady pace is roughly 85% of the top speed reached in recent workouts
             let averageTop = recent.map(\.maxMph).reduce(0, +) / Double(recent.count)
@@ -68,7 +68,7 @@ enum TemplateCoach {
         }
     }
 
-    static func make(_ request: WorkoutRequest, history: [HistoryEntry]) -> Workout {
+    static func make(_ request: WorkoutRequest, history: [HistoryEntry], heightInches: Double? = nil) -> Workout {
         let kind = request.kind == .recommend ? recommendedKind(history: history) : request.kind
         let total = max(10, request.minutes) * 60
         let warm = request.minutes >= 20 ? 240 : 180
@@ -79,7 +79,7 @@ enum TemplateCoach {
         case .moderate: 1
         case .hard: 2
         }
-        let base = baseSpeed(history: history) + (level - 1) * 0.3
+        let base = baseSpeed(history: history, heightInches: heightInches) + (level - 1) * 0.3
 
         // Warm-up and cool-down ramp over two steps each, instead of one flat step
         let warmLow = max(base - 1.0, 1.5)

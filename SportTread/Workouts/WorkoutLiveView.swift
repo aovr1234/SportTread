@@ -299,9 +299,14 @@ struct WorkoutLiveView: View {
                     .symbolEffect(.bounce, value: reason)
                 Text(reason).font(.title.weight(.heavy))
             }
-            if let entry = library.history.last, entry.name == runner.workout?.name {
+            if let model = runner.calibrationResult {
+                CalibrationResultCard(model: model, note: runner.calibrationNote)
+            } else if let entry = library.history.last, entry.name == runner.workout?.name {
                 SummaryBlock(entry: entry, others: library.history.filter { $0.id != entry.id })
             } else {
+                if let note = runner.calibrationNote {
+                    Text(note).font(.footnote).foregroundStyle(.orange)
+                }
                 HStack(spacing: 12) {
                     MetricTile(value: clock(treadmill.movingSeconds), unit: "moving time", size: 30)
                     MetricTile(value: String(format: "%.2f", treadmill.miles), unit: "miles", size: 30)
@@ -347,34 +352,63 @@ struct WorkoutLiveView: View {
     }
 }
 
-/// Heart-rate hold: switch, target and what moves (speed, incline or both).
+/// Heart-rate guidance: Off, Suggest (offers harder or easier when the heart rate stays outside a zone) or
+/// Hold (moves speed and/or incline to stay near a target).
 private struct HoldControls: View {
     @EnvironmentObject private var runner: WorkoutRunner
     @EnvironmentObject private var heart: HeartRateMonitor
     @AppStorage("holdTarget") private var target = 150
     @AppStorage("holdControl") private var controlName = HeartRateHold.Control.speed.rawValue
+    @AppStorage("watchZone") private var zone = 2
 
     private var control: HeartRateHold.Control { HeartRateHold.Control(rawValue: controlName) ?? .speed }
+    private var zones: HeartZones? { BodyProfile.stored.zones }
+    private var mode: Int { runner.holdTarget != nil ? 2 : (runner.watchZone != nil ? 1 : 0) }
+
+    private func setMode(_ new: Int) {
+        runner.stopHold()
+        runner.stopZoneWatch()
+        if new == 1, zones != nil { runner.startZoneWatch(zone: zone) }
+        if new == 2 { runner.startHold(target: target, control: control) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("Hold my heart rate", systemImage: "heart.fill").font(.subheadline.weight(.semibold))
+                Label("Heart rate", systemImage: "heart.fill").font(.subheadline.weight(.semibold))
                 Spacer()
-                Toggle("Hold my heart rate", isOn: Binding(
-                    get: { runner.holdTarget != nil },
-                    set: { on in
-                        if on { runner.startHold(target: target, control: control) } else { runner.stopHold() }
-                    }))
-                    .labelsHidden()
-                    .disabled(heart.sensorName == nil)
+                Picker("Heart rate", selection: Binding(get: { mode }, set: { setMode($0) })) {
+                    Text("Off").tag(0)
+                    Text("Suggest").tag(1)
+                    Text("Hold").tag(2)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 210)
+                .disabled(heart.sensorName == nil)
             }
             if heart.sensorName == nil {
                 Text("Connect a heart-rate sensor in Setup first.").font(.caption).foregroundStyle(.orange)
-            } else {
+            } else if mode == 1 {
+                zonePicker { z in
+                    zone = z
+                    runner.startZoneWatch(zone: z)
+                }
+                if let zones {
+                    let r = zones.range(zone)
+                    Text("Zone \(zone) is \(Int(r.lowerBound.rounded()))–\(Int(r.upperBound.rounded())) bpm. If you stay under it for 4 minutes or over it for 2, the app offers a harder or easier rest.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            } else if mode == 2 {
                 Stepper("Target \(target) bpm", value: $target, in: 90...190, step: 5)
                     .font(.subheadline)
                     .onChange(of: target) { _, value in runner.updateHold(target: value, control: control) }
+                zonePicker { z in
+                    if let mid = zones?.midpoint(z) {
+                        target = mid
+                        runner.updateHold(target: mid, control: control)
+                    }
+                }
                 Picker("Moves", selection: $controlName) {
                     ForEach(HeartRateHold.Control.allCases) { Text($0.rawValue).tag($0.rawValue) }
                 }
@@ -384,9 +418,29 @@ private struct HoldControls: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
+            if zones == nil, heart.sensorName != nil {
+                Text("Add your age in Setup › About you to use zones.").font(.caption2).foregroundStyle(.orange)
+            }
         }
         .padding(12)
         .glassCard(cornerRadius: 16)
+    }
+
+    private func zonePicker(_ choose: @escaping (Int) -> Void) -> some View {
+        HStack(spacing: 6) {
+            ForEach(1...5, id: \.self) { z in
+                Button { choose(z) } label: {
+                    Text("Z\(z)")
+                        .font(.caption.weight(.bold))
+                        .frame(maxWidth: .infinity, minHeight: 30)
+                        .background(zone == z && mode == 1 ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.white.opacity(0.1)),
+                                    in: Capsule())
+                        .foregroundStyle(zone == z && mode == 1 ? Color.black : Color.primary)
+                }
+                .buttonStyle(.plain)
+                .disabled(zones == nil)
+            }
+        }
     }
 }
 

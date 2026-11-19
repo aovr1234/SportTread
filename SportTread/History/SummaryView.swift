@@ -34,6 +34,7 @@ struct SummaryBlock: View {
                     }
                 }
                 if summary.samples.count >= 3 { charts(summary) }
+                zoneLine(summary)
                 comparison
             } else {
                 HStack(spacing: 8) {
@@ -65,6 +66,18 @@ struct SummaryBlock: View {
         .frame(maxWidth: .infinity, minHeight: 54)
         .padding(.vertical, 4)
         .glassCard(cornerRadius: 16)
+    }
+
+    /// "Zones: Z2 12:40 · Z3 4:20" for the zones that were used.
+    @ViewBuilder
+    private func zoneLine(_ summary: WorkoutSummary) -> some View {
+        if let zones = summary.zoneSeconds, zones.contains(where: { $0 > 0 }) {
+            let parts = zones.enumerated().filter { $0.element > 0 }.map { "Z\($0.offset + 1) \(clock($0.element))" }
+            Text("Zones: " + parts.joined(separator: " · "))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func charts(_ summary: WorkoutSummary) -> some View {

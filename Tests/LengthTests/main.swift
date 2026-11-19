@@ -531,6 +531,102 @@ sixty.kind = .intervals
 let sixtyFasts = TemplateCoach.make(sixty, history: []).steps.filter { $0.label.hasPrefix("Fast") }.count
 check(sixtyFasts >= 8 && sixtyFasts <= 12, "60 min of intervals should be about 10 pairs, got \(sixtyFasts)")
 
+// About you, zones, zone watch and the fitness test (fixes 43, 44, 45)
+check(BodyProfile.startingSpeed(heightInches: nil) == 3.0 && BodyProfile.startingSpeed(heightInches: 68) == 3.0, "starting speed for 5'8\" or unknown")
+check(BodyProfile.startingSpeed(heightInches: 74) == 3.1 && BodyProfile.startingSpeed(heightInches: 60) == 2.8, "starting speed for 6'2\" (3.1) and 5'0\" (2.8)")
+check(BodyProfile.startingSpeed(heightInches: 95) <= 3.6 && BodyProfile.startingSpeed(heightInches: 41) >= 2.6, "starting speed must stay between 2.6 and 3.6")
+check(TemplateCoach.baseSpeed(history: [], heightInches: 74) == 3.1 && TemplateCoach.baseSpeed(history: []) == 3.0, "base speed with and without a height")
+var calProfile = BodyProfile()
+check(calProfile.maxHeartRate == nil && calProfile.zones == nil, "no age, no maximum heart rate")
+calProfile.age = 40
+check(calProfile.maxHeartRate == 180, "208 - 0.7 x 40 should be 180, got \(String(describing: calProfile.maxHeartRate))")
+calProfile.measuredMaxBpm = 190
+check(calProfile.maxHeartRate == 190, "a measured maximum must win over the formula")
+let cal180 = HeartZones(maxBpm: 180, restingBpm: nil)
+check(abs(cal180.range(2).lowerBound - 108) < 1e-9 && abs(cal180.range(2).upperBound - 126) < 1e-9 && abs(cal180.range(5).upperBound - 180) < 1e-9, "zones as shares of the maximum")
+check(cal180.zone(for: 85) == 0 && cal180.zone(for: 100) == 1 && cal180.zone(for: 120) == 2 && cal180.zone(for: 200) == 5, "zone numbers")
+let calKarvonen = HeartZones(maxBpm: 180, restingBpm: 60)
+check(abs(calKarvonen.range(2).lowerBound - 132) < 1e-9 && abs(calKarvonen.range(2).upperBound - 144) < 1e-9 && calKarvonen.midpoint(2) == 138, "zones from the heart-rate reserve")
+var zoneLog = SampleLog()
+for second in stride(from: 0, to: 60, by: 1) { zoneLog.add(elapsed: Double(second), mph: 3.0, incline: 0, bpm: second < 30 ? 100 : 120) }
+let zoneSummary = WorkoutSummary.make(samples: zoneLog.samples, miles: 0.05, movingSeconds: 60, weightLb: 170, zones: cal180)
+check(zoneSummary.zoneSeconds == [30, 30, 0, 0, 0], "time in zones \(String(describing: zoneSummary.zoneSeconds)), expected [30, 30, 0, 0, 0]")
+check(WorkoutSummary.make(samples: zoneLog.samples, miles: 0.05, movingSeconds: 60, weightLb: 170).zoneSeconds == nil, "no zones without a maximum heart rate")
+
+func watchVerdicts(bpm: Int, seconds: Int) -> [(Int, ZoneWatch.Verdict)] {
+    var watch = ZoneWatch(zone: 2)
+    var found: [(Int, ZoneWatch.Verdict)] = []
+    let start = Date(timeIntervalSince1970: 4_000_000)
+    for second in 1...seconds {
+        let now = start.addingTimeInterval(Double(second))
+        watch.add(bpm: bpm, at: now)
+        if let verdict = watch.evaluate(now: now, zones: cal180, signalFresh: true) { found.append((second, verdict)) }
+    }
+    return found
+}
+let easyWatch = watchVerdicts(bpm: 100, seconds: 600)
+check(easyWatch.count == 2 && easyWatch[0].1 == .tooEasy && (240...250).contains(easyWatch[0].0) && easyWatch[1].0 >= easyWatch[0].0 + 300,
+      "below the zone: \(easyWatch.map { "\($0.0)s" }), expected two 'too easy' verdicts, the first near 243 s and 300 s apart")
+let hardWatch = watchVerdicts(bpm: 140, seconds: 130)
+check(hardWatch.count == 1 && hardWatch[0].1 == .tooHard && (120...130).contains(hardWatch[0].0), "above the zone: \(hardWatch.map { "\($0.0)s" })")
+check(watchVerdicts(bpm: 115, seconds: 600).isEmpty, "inside the zone must give no verdict")
+
+let calPlan = CalibrationPlan.workout(comfortable: 3.0, withIncline: false)
+check(calPlan.workout.totalSeconds == 1440 && calPlan.workout.problems.isEmpty, "fitness test of \(calPlan.workout.totalSeconds) s, problems \(calPlan.workout.problems)")
+check(calPlan.stages.map(\.mph) == [2.2, 2.6, 3.0, 3.4, 3.8, 4.2] && calPlan.stages.allSatisfy { $0.incline == 0 }, "stage speeds \(calPlan.stages.map(\.mph))")
+check(calPlan.stages[0].startSecond == 180 && calPlan.stages[5].startSecond == 180 + 5 * 180, "stage start times")
+check(SafetyCheck.clamped(calPlan.workout.steps) == calPlan.workout.steps, "the fitness test steps are changed by the safety clamp")
+let calPlanIncline = CalibrationPlan.workout(comfortable: 3.0, withIncline: true)
+check(calPlanIncline.stages.count == 9 && calPlanIncline.stages.suffix(3).map(\.incline) == [2, 4, 6] && calPlanIncline.workout.totalSeconds == 1980,
+      "incline part: \(calPlanIncline.stages.count) stages, \(calPlanIncline.workout.totalSeconds) s")
+for c in [2.5, 3.5, 4.0] {
+    let p = CalibrationPlan.workout(comfortable: c, withIncline: true)
+    check(p.workout.problems.isEmpty && Set(p.stages.map(\.mph)).count >= 3, "fitness test around \(c) mph: problems \(p.workout.problems)")
+    check(p.workout.steps.allSatisfy { $0.mph >= 1.5 && $0.mph <= 4.5 }, "fitness test around \(c) mph leaves walking speeds")
+}
+check(CalibrationPlan.shouldStop(bpm: 166, maxBpm: 180) && !CalibrationPlan.shouldStop(bpm: 165, maxBpm: 180), "the 92% stop line for a 180 maximum is 165.6")
+
+// A fake test: heart rate = 60 + 20 x mph + 4 x incline, plus a little noise
+func fakeSamples(stages: [CalibrationPlan.Stage], rising: Int? = nil) -> [SessionSample] {
+    var samples: [SessionSample] = []
+    for t in stride(from: 0, to: 1980, by: 5) {
+        let stage = stages.first { t >= $0.startSecond && t < $0.startSecond + $0.seconds }
+        let mph = stage?.mph ?? 2.0
+        let incline = stage?.incline ?? 0
+        var bpm = 60 + 20 * mph + 4 * incline + Double((t / 5) % 3) - 1
+        if let rising, let stage, stages.firstIndex(of: stage) == rising {
+            bpm = 90 + Double(t - (stage.startSecond + stage.seconds - 60)) / 60 * 12   // still climbing in the last minute
+        }
+        samples.append(SessionSample(t: t, mph: mph, incline: incline, bpm: Int(bpm.rounded())))
+    }
+    return samples
+}
+let calSamples = fakeSamples(stages: calPlanIncline.stages)
+let calAnalysis = CalibrationAnalysis.points(samples: calSamples, stages: calPlanIncline.stages, elapsed: 1980)
+check(calAnalysis.points.count == 9 && calAnalysis.unsettled.isEmpty, "analysis found \(calAnalysis.points.count) stages, unsettled \(calAnalysis.unsettled)")
+check(CalibrationAnalysis.points(samples: calSamples, stages: calPlanIncline.stages, elapsed: 700).points.count == 2, "only the stages finished at 700 s should count")
+check(CalibrationAnalysis.points(samples: fakeSamples(stages: calPlanIncline.stages, rising: 0), stages: calPlanIncline.stages, elapsed: 1980).unsettled == [1], "a stage still rising should be listed as unsettled")
+if let calModel = FitnessModel.fit(points: calAnalysis.points, restingBpm: 62, maxBpm: 180, date: Date()) {
+    check(abs(calModel.perMph - 20) < 1.5 && abs(calModel.perIncline - 4) < 0.8 && abs(calModel.base - 60) < 5, "fit: \(calModel.base) + \(calModel.perMph) x mph + \(calModel.perIncline) x incline")
+    check(calModel.r2 > 0.98 && !calModel.isNoisy, "fit quality \(calModel.r2)")
+    check(abs((calModel.mph(forBpm: 120) ?? 0) - 3.0) < 0.3, "speed for 120 bpm should be about 3.0, got \(String(describing: calModel.mph(forBpm: 120)))")
+    check(abs((calModel.incline(forBpm: 136, mph: 3.0) ?? 0) - 4) < 0.8, "incline for 136 bpm at 3.0 mph should be about 4")
+    check(abs(calModel.predict(mph: 3.4, incline: 2) - 136) < 3, "prediction for 3.4 mph at 2%")
+} else {
+    check(false, "the fake fitness test gave no model")
+}
+let speedOnly = calAnalysis.points.filter { $0.incline == 0 }
+if let flatModel = FitnessModel.fit(points: speedOnly, restingBpm: nil, maxBpm: nil, date: Date()) {
+    check(flatModel.perIncline == 0 && abs(flatModel.perMph - 20) < 1.5, "a speed-only fit has no incline term")
+} else {
+    check(false, "a speed-only fit failed")
+}
+check(FitnessModel.fit(points: Array(speedOnly.prefix(3)), restingBpm: nil, maxBpm: nil, date: Date()) == nil, "three points are too few")
+let falling = speedOnly.map { FitnessModel.Point(mph: $0.mph, incline: 0, bpm: 200 - 20 * $0.mph) }
+check(FitnessModel.fit(points: falling, restingBpm: nil, maxBpm: nil, date: Date()) == nil, "a heart rate that falls with speed must not give a model")
+let scattered = zip(speedOnly, [118.0, 95.0, 130.0, 88.0, 125.0, 99.0]).map { FitnessModel.Point(mph: $0.0.mph, incline: 0, bpm: $0.1) }
+check(FitnessModel.fit(points: scattered, restingBpm: nil, maxBpm: nil, date: Date())?.isNoisy ?? true, "scattered readings must be reported as noisy")
+
 // 6. Treadmill command rules (CommandPacer): replayed second by second, no Bluetooth
 let t0 = Date(timeIntervalSince1970: 1_000_000)
 func at(_ seconds: Double) -> Date { t0.addingTimeInterval(seconds) }

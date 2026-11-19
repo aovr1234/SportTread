@@ -338,7 +338,8 @@ final class TreadmillController: NSObject, ObservableObject {
         lastSessionSummary = String(format: "%d:%02d · %.2f mi · top %.1f mph", s / 60, s % 60, miles, sessionMaxMph)
         if movingSeconds >= 30 {
             let summary = WorkoutSummary.make(samples: sessionLog.samples, miles: miles, movingSeconds: s,
-                                              weightLb: WorkoutSummary.storedWeightLb)
+                                              weightLb: WorkoutSummary.storedWeightLb,
+                                              zones: BodyProfile.stored.zones)
             let entry = HistoryEntry(
                 date: now, name: "Treadmill session", plannedSeconds: 0, seconds: s, miles: miles,
                 maxMph: sessionMaxMph, maxIncline: sessionMaxIncline, completed: true, summary: summary)

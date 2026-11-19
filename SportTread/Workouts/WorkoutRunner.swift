@@ -82,6 +82,22 @@ final class WorkoutRunner: ObservableObject {
 
     // Heart-rate hold: moves speed and/or incline in small steps on top of the plan to keep the heart near a target
     private var holdEngine: HeartRateHold?
+
+    // Zone watch: suggests harder or easier when the heart rate stays outside a zone (fix 44)
+    private var zoneEngine: ZoneWatch?
+    @Published private(set) var watchZone: Int?
+
+    // Fitness test (fix 45): the test runs as a workout; at the end the settled heart rates become a model
+    private struct CalibrationRun {
+        var stages: [CalibrationPlan.Stage]
+        var restingBpm: Int?
+        var aborted = false
+        var noSignalSince: Date?
+    }
+
+    private var calibration: CalibrationRun?
+    @Published private(set) var calibrationResult: FitnessModel?
+    @Published private(set) var calibrationNote: String?
     @Published private(set) var holdTarget: Int?
     @Published private(set) var holdControl: HeartRateHold.Control = .speed
     @Published private(set) var holdStatus = ""
@@ -167,6 +183,11 @@ final class WorkoutRunner: ObservableObject {
         holdEngine = nil
         holdTarget = nil
         holdStatus = ""
+        zoneEngine = nil
+        watchZone = nil
+        calibration = nil
+        calibrationResult = nil
+        calibrationNote = nil
         originalSeconds = workout.totalSeconds
         checkInDue = false
         lastCheckInAt = 0
@@ -236,6 +257,8 @@ final class WorkoutRunner: ObservableObject {
     /// Closes the finished workout screen.
     func dismiss() {
         guard !isActive else { return }
+        calibrationResult = nil
+        calibrationNote = nil
         phase = .idle
         workout = nil
         offer = nil
@@ -307,6 +330,118 @@ final class WorkoutRunner: ObservableObject {
         holdStatus = ""
         dlog("Heart-rate hold off")
         if phase == .running { applyStep() }  // back to the plan
+    }
+
+    // MARK: Zone watch
+
+    func startZoneWatch(zone: Int) {
+        guard isActive else { return }
+        zoneEngine = ZoneWatch(zone: zone)
+        watchZone = zone
+        dlog("Zone watch on: Zone \(zone)")
+    }
+
+    func stopZoneWatch() {
+        guard watchZone != nil else { return }
+        zoneEngine = nil
+        watchZone = nil
+        dlog("Zone watch off")
+    }
+
+    private func runZoneWatch(now: Date) {
+        guard var engine = zoneEngine, holdEngine == nil, phase == .running, offer == nil, let step = currentStep,
+              !SafetyCheck.isEndStep(step), let zones = BodyProfile.stored.zones else { return }
+        defer { zoneEngine = engine }
+        let reading = treadmill.heartRateProvider?()
+        if let reading { engine.add(bpm: reading.bpm, at: reading.at) }
+        let fresh = reading.map { now.timeIntervalSince($0.at) < 5 } ?? false
+        guard let verdict = engine.evaluate(now: now, zones: zones, signalFresh: fresh) else { return }
+        switch verdict {
+        case .tooEasy:
+            let harder = LiveCoach.harder(current: step, remaining: remainingSteps)
+            dlog("Zone watch: under Zone \(engine.zone) for 4 minutes, offered harder")
+            present(Offer(
+                message: "Your heart rate has been under Zone \(engine.zone) for 4 minutes. Make the rest a bit harder (+0.3 mph, +1%)?",
+                action: .edit(remaining: harder.remaining, currentMph: harder.currentMph, currentIncline: harder.currentIncline),
+                note: "heart rate under Zone \(engine.zone): made it harder"))
+        case .tooHard:
+            let easier = LiveCoach.easier(current: step, remaining: remainingSteps)
+            dlog("Zone watch: over Zone \(engine.zone) for 2 minutes, offered easier")
+            present(Offer(
+                message: "Your heart rate has been over Zone \(engine.zone) for 2 minutes. Make the rest a bit easier?",
+                action: .edit(remaining: easier.remaining, currentMph: easier.currentMph, currentIncline: easier.currentIncline),
+                note: "heart rate over Zone \(engine.zone): made it easier"))
+        }
+    }
+
+    // MARK: Fitness test
+
+    /// Starts the fitness test as a workout.
+    func startCalibration(comfortable: Double, withIncline: Bool, restingBpm: Int?) {
+        guard treadmill.isReady, !isActive else { return }
+        let plan = CalibrationPlan.workout(comfortable: comfortable, withIncline: withIncline)
+        start(plan.workout)
+        guard isActive else { return }
+        calibration = CalibrationRun(stages: plan.stages, restingBpm: restingBpm)
+        dlog(String(format: "Fitness test started: %d stages around %.1f mph, resting heart rate %@", plan.stages.count, comfortable,
+                    restingBpm.map { String($0) } ?? "unknown"))
+    }
+
+    private var isInCoolDown: Bool {
+        guard let workout else { return false }
+        return stepIndex >= workout.steps.count - 1
+    }
+
+    /// The test stops at 92% of the estimated maximum heart rate (it skips to the cool-down) and pauses if the
+    /// sensor goes quiet for 10 seconds.
+    private func runCalibrationSafety(now: Date) {
+        guard var test = calibration, phase == .running, let maxBpm = BodyProfile.stored.maxHeartRate else { return }
+        defer { calibration = test }
+        let reading = treadmill.heartRateProvider?()
+        if let reading, now.timeIntervalSince(reading.at) < 5 {
+            test.noSignalSince = nil
+            if !test.aborted, !isInCoolDown, CalibrationPlan.shouldStop(bpm: reading.bpm, maxBpm: maxBpm) {
+                test.aborted = true
+                calibrationNote = "Stopped early: your heart rate reached 92% of your estimated maximum. Cooling down."
+                dlog("Fitness test: heart rate \(reading.bpm) reached 92% of \(maxBpm); skipping to the cool-down")
+                jumpToCoolDown()
+            }
+        } else {
+            let since = test.noSignalSince ?? now
+            test.noSignalSince = since
+            if now.timeIntervalSince(since) >= 10 {
+                test.noSignalSince = nil
+                dlog("Fitness test: no heart-rate signal for 10 s; paused")
+                pause(reason: "Heart-rate signal lost. Check the armband, then Resume.")
+            }
+        }
+    }
+
+    private func jumpToCoolDown() {
+        guard let workout, stepIndex < workout.steps.count - 1 else { return }
+        stepIndex = workout.steps.count - 1
+        stepElapsed = 0
+        applyStep()
+        saveRun()
+        activity.update(activityState())
+    }
+
+    private func finishCalibration(_ test: CalibrationRun) {
+        calibration = nil
+        let analysis = CalibrationAnalysis.points(samples: sampleLog.samples, stages: test.stages, elapsed: Int(totalElapsed))
+        let profile = BodyProfile.stored
+        guard let model = FitnessModel.fit(points: analysis.points, restingBpm: test.restingBpm, maxBpm: profile.maxHeartRate,
+                                           date: Date(), unsettled: analysis.unsettled) else {
+            calibrationNote = (calibrationNote.map { $0 + " " } ?? "")
+                + "Not enough stages with a clear heart rate to work out a model. Try the test again."
+            dlog("Fitness test: no model (\(analysis.points.count) stages with data)")
+            return
+        }
+        FitnessModel.save(model)
+        calibrationResult = model
+        dlog(String(format: "Fitness test: base %.1f, %.1f bpm per mph, %.1f per %% incline, fit %.2f, %d stages, unsettled %@",
+                    model.base, model.perMph, model.perIncline, model.r2, analysis.points.count,
+                    model.unsettled.isEmpty ? "none" : model.unsettled.map(String.init).joined(separator: ",")))
     }
 
     private func setHoldStatus(_ text: String) {
@@ -528,6 +663,8 @@ final class WorkoutRunner: ObservableObject {
             }
             detectConsoleChanges(now: now)
             runHold(now: now)
+            runZoneWatch(now: now)
+            runCalibrationSafety(now: now)
             peakMph = max(peakMph, treadmill.speedMph ?? 0)
             peakIncline = max(peakIncline, treadmill.incline ?? 0)
             stepElapsed += delta
@@ -878,6 +1015,9 @@ final class WorkoutRunner: ObservableObject {
         holdEngine = nil
         holdTarget = nil
         holdStatus = ""
+        zoneEngine = nil
+        watchZone = nil
+        if let test = calibration { finishCalibration(test) }
         dlog("Workout finished: \(reason), \(Int(totalElapsed)) s, \(String(format: "%.2f", treadmill.miles)) mi")
         treadmill.zeroInclineAndStop()
         treadmill.workoutActive = false
@@ -898,7 +1038,7 @@ final class WorkoutRunner: ObservableObject {
                 completed: reason == "Workout complete", deviations: deviations,
                 originalSeconds: originalSeconds,
                 summary: WorkoutSummary.make(samples: sampleLog.samples, miles: treadmill.miles, movingSeconds: Int(totalElapsed),
-                                             weightLb: WorkoutSummary.storedWeightLb)))
+                                             weightLb: WorkoutSummary.storedWeightLb, zones: BodyProfile.stored.zones)))
         }
     }
 }
