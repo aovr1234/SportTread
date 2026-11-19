@@ -2,7 +2,7 @@
 
 iPhone app that runs a ProForm 505 CST treadmill without iFit. See [PLAN.md](PLAN.md).
 
-## Current stage: build 0.7.7 (cloud AI for workouts with a fix-up loop, Easy interval limit; 0.7.6: the log shows what was asked and what the AI was told, interval quality check; 0.7.5: the chosen type is checked, warm-up and cool-down only at the ends; 0.7.4: shorter warm-up and cool-down; 0.7.3: diagnostics log, workout recovery, better workouts)
+## Current stage: build 0.8.0 (heart rate, heart-rate hold, Apple Health saving, incline choices, live coach on the cloud; 0.7.7: cloud AI for workouts with a fix-up loop, Easy interval limit; 0.7.6: the log shows what was asked and what the AI was told, interval quality check; 0.7.5: the chosen type is checked, warm-up and cool-down only at the ends; 0.7.4: shorter warm-up and cool-down; 0.7.3: diagnostics log, workout recovery, better workouts)
 Passed so far: milestones 0, 1, 2, 5, the Live Activity and two field tests. On hold: saving to Apple Health,
 heart rate (waits for the Bluetooth sensor), plan reminders and speed guards.
 
@@ -14,7 +14,7 @@ heart rate (waits for the Bluetooth sensor), plan reminders and speed guards.
 Every build first runs the length tests (`Tests/LengthTests`): every workout length from 10 to 90 minutes,
 simulated AI workouts, live edits and reading a length from text must come out exact, or the build fails.
 
-### Test (0.7.7 and earlier; the 0.7.2 list still applies: pacing, resume, summary, Live Activity buttons)
+### Test (0.8.0 and earlier; the 0.7.2 list still applies: pacing, resume, summary, Live Activity buttons)
 | # | Test | Pass when |
 |---|---|---|
 | 1 | Setup → Diagnostics | Lines appear as you use the app (connects, commands, steps); Share log sends `diagnostics.log`; Clear empties it |
@@ -39,6 +39,15 @@ simulated AI workouts, live edits and reading a length from text must come out e
 | 20 | Same, with Wi-Fi off | It falls back to Apple Intelligence or the rules, with no error screen |
 | 21 | Setup → Diagnostics → Share log after a cloud workout | "cloud AI is on", the prompt, which service answered and how fast, its steps, accepted or rejected and why |
 | 22 | Easy Intervals, 60 min | Fast steps up to about 4.0 mph for a 3.0 mph walker are accepted |
+| 23 | Setup → Heart rate sensor → Find a heart-rate sensor | Your Coospo shows up (wake it on bare skin first); tap it; Status says Connected with the bpm; Battery and Signal show; after closing the app it reconnects by itself |
+| 24 | Treadmill and Workout screens with the armband on | A ♥ number updates every second; '--' when the armband is off |
+| 25 | Workout → ✦ Coach → Hold my heart rate | Switch on, set a target (for example 5 above where you are now), choose Speed, Incline or Both; the status line says 'Heart rate 128, target 135: speed +0.1 mph'; changes come at most every 15 s (30 s for incline); the tiles and STOP always win; it waits during warm-up and cool-down |
+| 26 | Same, then move a tile by hand | The hold pauses 45 s and then starts from your new value |
+| 27 | Setup → Apple Health → Save workouts to Apple Health, then finish a workout | Health asks permission once; the Fitness app shows an indoor walk or run (source 'Spotify') with distance, active calories, heart rate and climb; the Move ring moves |
+| 28 | Coach tab → Incline: Lots, Make it hard with: Incline, 45-min walk | Blocks at 4 to 8% with the speed within about 0.2 mph of your comfortable speed |
+| 29 | Coach tab → Incline: None (or a note 'my legs are sore') | 0% in every step (hills excepted) |
+| 30 | Intervals, 60 min | About 10 pairs of 2:00 fast and 3:00 recovery, not 21 |
+| 31 | Live Coach during a workout: type 'Hello', then 'add some hills' | 'Hello' gets a reply and no change; hills are added to the whole rest of the workout, with the intervals keeping their lengths (the answer is no longer cut at 24 steps) |
 
 Still to check from 0.7: the treadmill-mode Live Activity (ends 2 min after stopping), readiness, goal plans,
 the workout editor, and deleting history.

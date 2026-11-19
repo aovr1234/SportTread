@@ -13,8 +13,12 @@ enum WorkoutPrompt {
           by at least 0.5 mph (for example 2.0 then 2.5 mph), and end with a cool-down of about 3 minutes
           in total (never more than 4) in two steps that ramp down. Most of the time is the main part.
         - The main part is never one flat step: use at least 3 blocks of 5 to 10 minutes that differ in
-          speed (by 0.2 to 0.5 mph) or in incline (0 to 3 percent). Never give every step the same speed and incline.
-        - If the person is sore, tired or asks for easy, keep the incline at 0 and vary only the speed a little.
+          speed (by 0.2 to 0.5 mph) or in incline. Never give every step the same speed and incline.
+        - Follow the incline instructions in the request. Only if the note says the person is sore, tired or
+          hurting, keep the incline at 0 percent.
+        - Name the first two steps exactly "Warm-up" and "Ease in", and the last two exactly "Ease out" and "Cool-down".
+        - Never use more than 8 percent incline above 3.5 mph or more than 6 percent above 4.5 mph, and change
+          the incline by at most 3 percent between steps.
         - Make step lengths whole minutes (multiples of 60 seconds), except interval steps.
         - The chosen workout type and intensity are required. If the person's note seems to ask for something
           else, still make that type and intensity and use the note only to adjust how hard it is.
@@ -42,9 +46,12 @@ enum WorkoutPrompt {
     }
 
     /// What each type means, so a model can't read "intervals" as "varied walking".
-    static func typeGuide(_ kind: WorkoutRequest.Kind, base: Double, intensity: WorkoutRequest.Intensity) -> String {
+    static func typeGuide(_ kind: WorkoutRequest.Kind, base: Double, intensity: WorkoutRequest.Intensity,
+                          effort: WorkoutRequest.EffortFrom = .mix) -> String {
         func mph(_ value: Double) -> String { String(format: "%.1f", value) }
         switch kind {
+        case .intervals where effort == .incline:
+            return "Type rules for intervals: the main part repeats at least 5 pairs of a steep step (1 to 3 minutes at 4 to 6 percent incline) and an easy step (1.5 to 3 minutes at 1 to 2 percent), all at a steady speed of about \(mph(base)) mph. It is not a steady walk."
         case .intervals:
             let range = fastRange(intensity)
             return "Type rules for intervals: the main part repeats at least 5 pairs of a fast step (1 to 3 minutes at \(mph(base + range.low)) to \(mph(base + range.high)) mph) and a recovery step (1.5 to 3 minutes at \(mph(base)) mph). It is not a steady walk."
@@ -72,7 +79,9 @@ enum WorkoutPrompt {
             Total time: exactly \(request.minutes * 60) seconds.
             The person's comfortable walking speed is about \(String(format: "%.1f", base)) mph.
             """
-        prompt += "\n" + typeGuide(request.kind, base: base, intensity: request.intensity)
+        prompt += "\n" + typeGuide(request.kind, base: base, intensity: request.intensity, effort: request.effectiveEffort)
+        let incline = inclineGuide(request, base: base)
+        if !incline.isEmpty { prompt += "\n" + incline }
         prompt += recent.isEmpty
             ? "\nNo previous workouts yet, so keep it approachable."
             : "\nRecent workouts:\n" + recent.joined(separator: "\n")
@@ -81,6 +90,108 @@ enum WorkoutPrompt {
             prompt += "\nThe person adds: \(notes)"
         }
         return prompt
+    }
+
+    /// What the person wants from the incline, and from "effort from".
+    static func inclineGuide(_ request: WorkoutRequest, base: Double) -> String {
+        if request.kind == .hills { return "" }
+        var text: String
+        switch request.effectiveIncline {
+        case .none:
+            return "Incline: use 0 percent for every step."
+        case .some:
+            text = request.kind == .intervals
+                ? "Incline: put the fast steps on 1 to 3 percent and the recoveries on 0 percent."
+                : "Incline: use at least 2 main blocks at 1 to 3 percent incline and the others at 0 to 1 percent."
+        case .lots:
+            text = "Incline: make incline a big part of this workout: main blocks at 3 to 8 percent, changing by at most 3 percent between steps."
+        }
+        switch request.effectiveEffort {
+        case .incline where request.kind != .jog:
+            text += String(format: " Make the effort with incline, not speed: keep every main step within 0.2 mph of %.1f mph and raise the incline in blocks of 4 to 8 percent.", base)
+        case .speed:
+            text += " Make the effort with speed and keep the incline at 0 to 2 percent."
+        default:
+            break
+        }
+        return text
+    }
+
+    // MARK: Live coach
+
+    static let editRules = """
+        You adjust a treadmill workout that is already running, following the runner's request.
+        Rules:
+        - Change only what the request asks for. Keep step labels unless a step is removed or added.
+        - Keep the total remaining time the same unless the request is about time (shorter, longer, add or remove minutes).
+        - Keep the cool-down at the end.
+        - Speeds are in miles per hour (0.5 to 10), incline in percent (0 to 10).
+        - Never raise the speed by more than 1.5 mph from one step to the next.
+        - Each step lasts between 30 seconds and 15 minutes.
+        - If the runner mentions pain, tiredness or feeling unwell, make it easier, never harder.
+        - If the request is a greeting, a question, or doesn't ask for any change, change nothing: set isChange to false, put your reply in the summary, and return the remaining steps exactly as they are.
+        - Return every remaining step, not just the first few.
+        """
+
+    static let editJSONRule = """
+        Reply with one JSON object only, with no other text, in exactly this shape:
+        {"summary": "one short sentence", "isChange": true, "changeCurrentStep": false, "currentMph": 3.0, "currentIncline": 0, "remaining": [{"label": "Recover", "seconds": 90, "mph": 3.0, "incline": 0}]}
+        """
+
+    static func liveRequest(_ request: String, current: WorkoutStep, remaining: [WorkoutStep], deviations: String) -> String {
+        func line(_ step: WorkoutStep) -> String {
+            "- \(step.label): \(step.seconds) s at \(String(format: "%.1f", step.mph)) mph, \(String(format: "%g", step.incline))% incline"
+        }
+        return """
+            Current step: \(line(current))
+            Remaining steps:
+            \(remaining.isEmpty ? "(none)" : remaining.map(line).joined(separator: "\n"))
+            What the runner has done so far: \(deviations)
+            The runner asks: \(request)
+            """
+    }
+
+    /// A live edit read out of a cloud model's reply.
+    struct ParsedEdit {
+        var summary: String
+        var isChange: Bool
+        var changeCurrentStep: Bool
+        var currentMph: Double?
+        var currentIncline: Double?
+        var steps: [WorkoutStep]
+    }
+
+    static func parseEdit(_ text: String) -> ParsedEdit? {
+        guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end,
+              let data = String(text[start...end]).data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let raw = object["remaining"] as? [[String: Any]] else { return nil }
+        guard let steps = readSteps(raw) else { return nil }
+        func number(_ value: Any?) -> Double? {
+            if let number = value as? NSNumber { return number.doubleValue }
+            if let text = value as? String { return Double(text) }
+            return nil
+        }
+        return ParsedEdit(
+            summary: (object["summary"] as? String) ?? "Changed the rest of the workout.",
+            isChange: (object["isChange"] as? Bool) ?? true,
+            changeCurrentStep: (object["changeCurrentStep"] as? Bool) ?? false,
+            currentMph: number(object["currentMph"]), currentIncline: number(object["currentIncline"]), steps: steps)
+    }
+
+    private static func readSteps(_ rawSteps: [[String: Any]]) -> [WorkoutStep]? {
+        func number(_ value: Any?) -> Double? {
+            if let number = value as? NSNumber { return number.doubleValue }
+            if let text = value as? String { return Double(text) }
+            return nil
+        }
+        var steps: [WorkoutStep] = []
+        for raw in rawSteps {
+            guard let seconds = number(raw["seconds"]), let mph = number(raw["mph"]) else { return nil }
+            steps.append(WorkoutStep(label: (raw["label"] as? String) ?? "Step", seconds: Int(seconds.rounded()),
+                                     mph: mph, incline: number(raw["incline"]) ?? 0))
+        }
+        return steps
     }
 
     // MARK: Cloud models
@@ -154,17 +265,7 @@ enum WorkoutPrompt {
               let data = String(text[start...end]).data(using: .utf8),
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let rawSteps = object["steps"] as? [[String: Any]], !rawSteps.isEmpty else { return nil }
-        func number(_ value: Any?) -> Double? {
-            if let number = value as? NSNumber { return number.doubleValue }
-            if let text = value as? String { return Double(text) }
-            return nil
-        }
-        var steps: [WorkoutStep] = []
-        for raw in rawSteps {
-            guard let seconds = number(raw["seconds"]), let mph = number(raw["mph"]) else { return nil }
-            steps.append(WorkoutStep(label: (raw["label"] as? String) ?? "Step", seconds: Int(seconds.rounded()),
-                                     mph: mph, incline: number(raw["incline"]) ?? 0))
-        }
+        guard let steps = readSteps(rawSteps) else { return nil }
         return Workout(name: (object["name"] as? String) ?? "Workout", summary: (object["summary"] as? String) ?? "", steps: steps)
     }
 }

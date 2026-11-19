@@ -34,8 +34,12 @@ Rules:
   by at least 0.5 mph (for example 2.0 then 2.5 mph), and end with a cool-down of about 3 minutes
   in total (never more than 4) in two steps that ramp down. Most of the time is the main part.
 - The main part is never one flat step: use at least 3 blocks of 5 to 10 minutes that differ in
-  speed (by 0.2 to 0.5 mph) or in incline (0 to 3 percent). Never give every step the same speed and incline.
-- If the person is sore, tired or asks for easy, keep the incline at 0 and vary only the speed a little.
+  speed (by 0.2 to 0.5 mph) or in incline. Never give every step the same speed and incline.
+- Follow the incline instructions in the request. Only if the note says the person is sore, tired or
+  hurting, keep the incline at 0 percent.
+- Name the first two steps exactly "Warm-up" and "Ease in", and the last two exactly "Ease out" and "Cool-down".
+- Never use more than 8 percent incline above 3.5 mph or more than 6 percent above 4.5 mph, and change
+  the incline by at most 3 percent between steps.
 - Make step lengths whole minutes (multiples of 60 seconds), except interval steps.
 - The chosen workout type and intensity are required. If the person's note seems to ask for something
   else, still make that type and intensity and use the note only to adjust how hard it is.
@@ -50,6 +54,8 @@ JSON_RULE = ('Reply with one JSON object only, with no other text, in exactly th
              '{"name": "at most 4 words", "summary": "one encouraging sentence", '
              '"steps": [{"label": "Warm-up", "seconds": 120, "mph": 2.0, "incline": 0}]}')
 
+# NOTE: the app now also sends an incline instruction (None / Some / Lots) and "make it hard with"; this benchmark
+# runs the default (Some, Mix), so the prompt below has no incline line yet.
 FAST = {"easy": (0.5, 1.0), "moderate": (0.8, 1.5), "hard": (1.2, 2.0)}
 BASE = 3.0  # the comfortable speed used in every scenario
 

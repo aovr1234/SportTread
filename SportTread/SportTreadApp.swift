@@ -10,6 +10,8 @@ struct SportTreadApp: App {
     @StateObject private var liveCoach = LiveCoach()
     @StateObject private var readiness = Readiness()
     @StateObject private var health = HealthTest()
+    @StateObject private var heart: HeartRateMonitor
+    @StateObject private var healthSaver: HealthSaver
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -28,8 +30,19 @@ struct SportTreadApp: App {
         let runner = WorkoutRunner(treadmill: treadmill)
         let dataFolder = DataFolder()
         let library = WorkoutLibrary(dataFolder: dataFolder)
-        runner.onFinish = { [weak library] entry in library?.record(entry) }
-        treadmill.onSessionEnd = { [weak library] entry in library?.record(entry) }
+        let heart = HeartRateMonitor()
+        let saver = HealthSaver()
+        treadmill.heartRateProvider = { [weak heart] in heart?.currentReading() }
+        runner.onFinish = { [weak library, weak saver] entry in
+            library?.record(entry)
+            if let saver { Task { await saver.save(entry) } }
+        }
+        treadmill.onSessionEnd = { [weak library, weak saver] entry in
+            library?.record(entry)
+            if let saver { Task { await saver.save(entry) } }
+        }
+        _heart = StateObject(wrappedValue: heart)
+        _healthSaver = StateObject(wrappedValue: saver)
         // Live Activity buttons (speed -/+, pause/resume, STOP) run in this process
         LiveControl.handler = { [weak treadmill, weak runner] command in
             guard let treadmill, let runner else { return }
@@ -85,6 +98,7 @@ struct SportTreadApp: App {
                     .environmentObject(runner)
                     .environmentObject(library)
                     .environmentObject(liveCoach)
+                    .environmentObject(heart)
                     .preferredColorScheme(.dark)
                     .tint(Theme.lime)
             }
@@ -95,6 +109,8 @@ struct SportTreadApp: App {
             .environmentObject(coach)
             .environmentObject(readiness)
             .environmentObject(health)
+            .environmentObject(heart)
+            .environmentObject(healthSaver)
             .preferredColorScheme(.dark)
             .tint(Theme.lime)
             .task { library.reload() }

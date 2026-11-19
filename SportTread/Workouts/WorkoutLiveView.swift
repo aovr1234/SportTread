@@ -33,7 +33,7 @@ struct WorkoutLiveView: View {
             if runner.isActive { controls.padding(.horizontal).padding(.bottom, 8) }
         }
         .sheet(isPresented: $coachOpen) {
-            CoachSheet().presentationDetents([.height(360), .large])
+            CoachSheet().presentationDetents([.height(470), .large])
         }
         .animation(.spring(response: 0.45, dampingFraction: 0.85), value: runner.stepIndex)
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: runner.offer)
@@ -80,6 +80,7 @@ struct WorkoutLiveView: View {
                 .lineLimit(2)
                 .minimumScaleFactor(0.8)
             Spacer(minLength: 0)
+            HeartChip()
             if runner.isActive && !treadmill.isReady {
                 if [.scanning, .connecting, .handshaking, .reconnecting].contains(treadmill.state) {
                     ProgressView()
@@ -96,7 +97,7 @@ struct WorkoutLiveView: View {
     private var statusText: String {
         switch runner.phase {
         case .starting: "Starting…"
-        case .running: "Running"
+        case .running: runner.holdTarget != nil && !runner.holdStatus.isEmpty ? runner.holdStatus : "Running"
         case .paused(let reason): reason
         case .finished: "Done"
         case .idle: ""
@@ -346,6 +347,49 @@ struct WorkoutLiveView: View {
     }
 }
 
+/// Heart-rate hold: switch, target and what moves (speed, incline or both).
+private struct HoldControls: View {
+    @EnvironmentObject private var runner: WorkoutRunner
+    @EnvironmentObject private var heart: HeartRateMonitor
+    @AppStorage("holdTarget") private var target = 150
+    @AppStorage("holdControl") private var controlName = HeartRateHold.Control.speed.rawValue
+
+    private var control: HeartRateHold.Control { HeartRateHold.Control(rawValue: controlName) ?? .speed }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Hold my heart rate", systemImage: "heart.fill").font(.subheadline.weight(.semibold))
+                Spacer()
+                Toggle("Hold my heart rate", isOn: Binding(
+                    get: { runner.holdTarget != nil },
+                    set: { on in
+                        if on { runner.startHold(target: target, control: control) } else { runner.stopHold() }
+                    }))
+                    .labelsHidden()
+                    .disabled(heart.sensorName == nil)
+            }
+            if heart.sensorName == nil {
+                Text("Connect a heart-rate sensor in Setup first.").font(.caption).foregroundStyle(.orange)
+            } else {
+                Stepper("Target \(target) bpm", value: $target, in: 90...190, step: 5)
+                    .font(.subheadline)
+                    .onChange(of: target) { _, value in runner.updateHold(target: value, control: control) }
+                Picker("Moves", selection: $controlName) {
+                    ForEach(HeartRateHold.Control.allCases) { Text($0.rawValue).tag($0.rawValue) }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: controlName) { _, _ in runner.updateHold(target: target, control: control) }
+                Text("Changes the speed or incline in small steps, only in the main part. The tiles and STOP always win.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(12)
+        .glassCard(cornerRadius: 16)
+    }
+}
+
 /// The coach, in a sheet: four fixed quick buttons, typed or spoken requests, and the workout length.
 private struct CoachSheet: View {
     @EnvironmentObject private var runner: WorkoutRunner
@@ -382,6 +426,8 @@ private struct CoachSheet: View {
                 }
             }
             .disabled(liveCoach.isWorking)
+
+            HoldControls()
 
             HStack(spacing: 8) {
                 TextField("e.g. skip the hills, my knees hurt", text: $request, axis: .vertical)

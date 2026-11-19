@@ -27,7 +27,11 @@ struct SummaryBlock: View {
                     } else {
                         cell(String(format: "%.1f", summary.topMph), "top mph")
                     }
-                    cell(String(format: "%.1f%%", summary.avgIncline), "avg incline")
+                    if let avg = summary.avgBpm, let peak = summary.peakBpm {
+                        cell("\(avg) / \(peak)", "avg / peak bpm")
+                    } else {
+                        cell(String(format: "%.1f%%", summary.avgIncline), "avg incline")
+                    }
                 }
                 if summary.samples.count >= 3 { charts(summary) }
                 comparison

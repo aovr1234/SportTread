@@ -79,6 +79,12 @@ final class WorkoutRunner: ObservableObject {
     private var lastNotedProblem: String?
     private var sampleLog = SampleLog()
     private var lastSaveAt = Date.distantPast
+
+    // Heart-rate hold: moves speed and/or incline in small steps on top of the plan to keep the heart near a target
+    private var holdEngine: HeartRateHold?
+    @Published private(set) var holdTarget: Int?
+    @Published private(set) var holdControl: HeartRateHold.Control = .speed
+    @Published private(set) var holdStatus = ""
     /// Shown for a few seconds after a workout was picked up again following an app restart
     @Published private(set) var recoveryNotice: String?
 
@@ -158,6 +164,9 @@ final class WorkoutRunner: ObservableObject {
         peakMph = 0
         peakIncline = 0
         sampleLog.reset()
+        holdEngine = nil
+        holdTarget = nil
+        holdStatus = ""
         originalSeconds = workout.totalSeconds
         checkInDue = false
         lastCheckInAt = 0
@@ -242,6 +251,10 @@ final class WorkoutRunner: ObservableObject {
         treadmill.setSpeed(value)
         recordSpeedChange(to: value, source: "in the app")
         commandedAt = Date()
+        if holdEngine != nil, let step = currentStep, !SafetyCheck.isEndStep(step) {
+            holdEngine?.userChanged(at: Date())
+            holdEngine?.rebase(speedOffset: value - step.mph)  // the new value is the starting point
+        }
     }
 
     func adjustIncline(to percent: Double) {
@@ -250,6 +263,85 @@ final class WorkoutRunner: ObservableObject {
         treadmill.setIncline(value)
         recordInclineChange(to: value, source: "in the app")
         commandedAt = Date()
+        if holdEngine != nil, let step = currentStep, !SafetyCheck.isEndStep(step) {
+            holdEngine?.userChanged(at: Date())
+            holdEngine?.rebase(inclineOffset: value - step.incline)
+        }
+    }
+
+    // MARK: Heart-rate hold
+
+    /// The limits the hold keeps to: up to half a mph above the workout's top planned speed, up to 2% above its
+    /// steepest incline, never beyond the treadmill's own range or the speed and incline cap.
+    private var holdLimits: HeartRateHold.Limits {
+        let topMph = max(workout?.maxMph ?? 3, currentStep?.mph ?? 0)
+        let topIncline = max(workout?.maxIncline ?? 0, currentStep?.incline ?? 0)
+        return HeartRateHold.Limits(
+            minMph: 1.0, maxMph: min(topMph + 0.5, 7.0),
+            maxIncline: min(topIncline + 2, TreadmillController.maxIncline))
+    }
+
+    func startHold(target: Int, control: HeartRateHold.Control) {
+        guard isActive else { return }
+        holdEngine = HeartRateHold(target: target, control: control)
+        holdTarget = target
+        holdControl = control
+        holdStatus = "Heart-rate hold on at \(target) bpm"
+        dlog("Heart-rate hold on: target \(target) bpm, moving \(control.rawValue.lowercased())")
+    }
+
+    /// Changes the target or what moves, keeping what the hold has already added.
+    func updateHold(target: Int, control: HeartRateHold.Control) {
+        guard holdEngine != nil else { return }
+        holdEngine?.target = target
+        holdEngine?.control = control
+        holdTarget = target
+        holdControl = control
+        dlog("Heart-rate hold changed: target \(target) bpm, moving \(control.rawValue.lowercased())")
+    }
+
+    func stopHold() {
+        guard holdTarget != nil else { return }
+        holdEngine = nil
+        holdTarget = nil
+        holdStatus = ""
+        dlog("Heart-rate hold off")
+        if phase == .running { applyStep() }  // back to the plan
+    }
+
+    private func setHoldStatus(_ text: String) {
+        if holdStatus != text { holdStatus = text }
+    }
+
+    private func runHold(now: Date) {
+        guard var engine = holdEngine, phase == .running, let step = currentStep else { return }
+        defer { holdEngine = engine }
+        let reading = treadmill.heartRateProvider?()
+        if let reading { engine.add(bpm: reading.bpm, at: reading.at) }
+        if SafetyCheck.isEndStep(step) {
+            setHoldStatus("Heart-rate hold waits for the main part")
+            return
+        }
+        let limits = holdLimits
+        let fresh = reading.map { now.timeIntervalSince($0.at) < 5 } ?? false
+        switch engine.evaluate(now: now, baseMph: step.mph, baseIncline: step.incline, limits: limits, signalFresh: fresh) {
+        case .none:
+            let nowText = engine.smoothed(now: now).map { ", now \(Int($0.rounded()))" } ?? ""
+            setHoldStatus("Holding \(engine.target) bpm\(nowText)")
+        case .warn(let text):
+            setHoldStatus(text)
+        case .change(let speed, let incline, let text):
+            let mph = min(max(engine.effectiveMph(base: step.mph), limits.minMph), limits.maxMph)
+            let steep = min(max(engine.effectiveIncline(base: step.incline), 0),
+                            min(limits.maxIncline, SafetyCheck.inclineCap(forMph: mph)))
+            if abs(speed) > 0.001 { treadmill.setSpeed(mph) }
+            if abs(incline) > 0.001 { treadmill.setIncline(steep) }
+            expectedMph = mph
+            expectedIncline = steep
+            commandedAt = now
+            setHoldStatus(text)
+            dlog(String(format: "Heart-rate hold: %@ (now %.1f mph, %.1f%%)", text, mph, steep))
+        }
     }
 
     // MARK: Offers
@@ -435,11 +527,13 @@ final class WorkoutRunner: ObservableObject {
                 note(.connection, problem)
             }
             detectConsoleChanges(now: now)
+            runHold(now: now)
             peakMph = max(peakMph, treadmill.speedMph ?? 0)
             peakIncline = max(peakIncline, treadmill.incline ?? 0)
             stepElapsed += delta
             totalElapsed += delta
-            sampleLog.add(elapsed: totalElapsed, mph: treadmill.speedMph ?? 0, incline: treadmill.incline ?? 0)
+            sampleLog.add(elapsed: totalElapsed, mph: treadmill.speedMph ?? 0, incline: treadmill.incline ?? 0,
+                          bpm: treadmill.heartRateProvider?()?.bpm)
             if now.timeIntervalSince(lastSaveAt) >= 10 { saveRun() }
             let checkInMinutes = UserDefaults.standard.integer(forKey: Self.checkInKey)
             if checkInMinutes > 0, !checkInDue, offer == nil,
@@ -507,10 +601,18 @@ final class WorkoutRunner: ObservableObject {
 
     private func applyStep() {
         guard let step = currentStep else { return }
-        treadmill.setIncline(step.incline)
-        treadmill.setSpeed(step.mph)
-        expectedMph = step.mph
-        expectedIncline = step.incline
+        // With the heart-rate hold on, a main step starts from the plan plus what the hold has added so far
+        var mph = step.mph
+        var incline = step.incline
+        if let engine = holdEngine, !SafetyCheck.isEndStep(step) {
+            let limits = holdLimits
+            mph = min(max(engine.effectiveMph(base: step.mph), limits.minMph), limits.maxMph)
+            incline = min(max(engine.effectiveIncline(base: step.incline), 0), min(limits.maxIncline, SafetyCheck.inclineCap(forMph: mph)))
+        }
+        treadmill.setIncline(incline)
+        treadmill.setSpeed(mph)
+        expectedMph = mph
+        expectedIncline = incline
         commandedAt = Date()
         speedCandidate = nil
         inclineCandidate = nil
@@ -773,6 +875,9 @@ final class WorkoutRunner: ObservableObject {
         loop?.cancel()
         loop = nil
         clearSavedRun()
+        holdEngine = nil
+        holdTarget = nil
+        holdStatus = ""
         dlog("Workout finished: \(reason), \(Int(totalElapsed)) s, \(String(format: "%.2f", treadmill.miles)) mi")
         treadmill.zeroInclineAndStop()
         treadmill.workoutActive = false

@@ -20,10 +20,55 @@ struct WorkoutRequest: Equatable {
         var id: String { rawValue }
     }
 
+    /// How much incline the workout should use
+    enum InclineChoice: String, CaseIterable, Identifiable {
+        case none = "None"
+        case some = "Some"
+        case lots = "Lots"
+
+        var id: String { rawValue }
+    }
+
+    /// What makes the workout hard: faster belt, steeper deck, or both
+    enum EffortFrom: String, CaseIterable, Identifiable {
+        case speed = "Speed"
+        case mix = "Mix"
+        case incline = "Incline"
+
+        var id: String { rawValue }
+    }
+
     var minutes = 30
     var kind = Kind.recommend
     var intensity = Intensity.moderate
     var notes = ""
+    var incline = InclineChoice.some
+    var effortFrom = EffortFrom.mix
+
+    /// The note says the person is sore, tired or hurting (and doesn't ask for hills): no incline.
+    var gentle: Bool {
+        let text = notes.lowercased()
+        let hurts = ["sore", "tired", "hurt", "pain", "injur", "ache", "achy", "fatigue", "exhaust"].contains { text.contains($0) }
+        let wantsIncline = ["incline", "hill", "climb", "uphill"].contains { text.contains($0) }
+        return hurts && !wantsIncline
+    }
+
+    /// What makes it hard, once the incline choice is taken into account: "Incline" with no incline wanted
+    /// (None, or a note about pain) is just Mix.
+    var effectiveEffort: EffortFrom {
+        effortFrom == .incline && effectiveIncline == .none ? .mix : effortFrom
+    }
+
+    /// The incline the workout really gets: None and a note about pain mean none; "Effort from Speed" keeps it
+    /// at Some at most; "Effort from Incline" makes it Lots.
+    var effectiveIncline: InclineChoice {
+        if incline == .none || gentle { return .none }
+        switch effortFrom {
+        case .speed: return .some
+        case .mix: return incline
+        case .incline: return .lots
+        }
+    }
 }
 
 /// One way a workout departed from its plan, logged as it happens for the AI coach.

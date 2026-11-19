@@ -18,7 +18,7 @@ struct CloudProvider: Codable, Identifiable, Equatable {
         CloudProvider(id: "groq", name: "Groq", baseURL: "https://api.groq.com/openai/v1", model: "openai/gpt-oss-120b",
                       needsKey: true, enabled: true, about: "Fast and free. Key: console.groq.com/keys"),
         CloudProvider(id: "gemini", name: "Google Gemini", baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
-                      model: "gemini-2.5-flash", needsKey: true, enabled: true,
+                      model: "gemini-3.5-flash-lite", needsKey: true, enabled: true,
                       about: "Strong with structure. Key: aistudio.google.com/apikey. Free-tier prompts may be used by Google."),
         CloudProvider(id: "cohere", name: "Cohere", baseURL: "https://api.cohere.ai/compatibility/v1", model: "command-a-03-2025",
                       needsKey: true, enabled: true, about: "Free trial key, 1,000 calls a month. Key: dashboard.cohere.com/api-keys"),
@@ -83,6 +83,10 @@ final class CloudSettings: ObservableObject {
         useCloud = defaults.bool(forKey: Self.useKey)
         sendHistory = defaults.object(forKey: Self.historyKey) == nil ? true : defaults.bool(forKey: Self.historyKey)
         var stored = (defaults.data(forKey: Self.providersKey)).flatMap { try? JSONDecoder().decode([CloudProvider].self, from: $0) } ?? []
+        // The old default Gemini model name (only that one) moves to the model that exists on the free tier
+        for index in stored.indices where stored[index].id == "gemini" && stored[index].model == "gemini-2.5-flash" {
+            stored[index].model = "gemini-3.5-flash-lite"
+        }
         // Providers added in later builds appear at the end
         for preset in CloudProvider.defaults where !stored.contains(where: { $0.id == preset.id }) { stored.append(preset) }
         providers = stored

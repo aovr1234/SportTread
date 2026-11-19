@@ -91,6 +91,8 @@ struct TreadmillView: View {
         HStack {
             Label(timeText, systemImage: "clock")
             Spacer()
+            HeartChip().font(.title3)
+            Spacer()
             Label(String(format: "%.2f mi", treadmill.miles), systemImage: "figure.walk")
         }
         .font(.title3.weight(.semibold).monospacedDigit())

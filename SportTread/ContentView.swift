@@ -16,6 +16,7 @@ struct ContentView: View {
     @AppStorage(WorkoutSummary.weightKey) private var weightLb = WorkoutSummary.defaultWeightLb
     @AppStorage(WorkoutSummary.showCaloriesKey) private var showCalories = true
     @ObservedObject private var diagnostics = DiagnosticsLog.shared
+    @EnvironmentObject private var healthSaver: HealthSaver
 
     private func backUp() {
         guard let file = dataFolder.makeBackupFile() else { return }
@@ -48,6 +49,21 @@ struct ContentView: View {
                     Text(showCalories
                          ? "An estimate from speed, incline and your weight (usually within about 15%). Turn it off if you'd rather use Apple Fitness on your watch."
                          : "Calories are hidden everywhere. The numbers are still saved with each session, so turning this back on shows them.")
+                }
+
+                HeartRateSection()
+
+                Section {
+                    Toggle("Save workouts to Apple Health", isOn: Binding(
+                        get: { healthSaver.enabled },
+                        set: { on in Task { await healthSaver.setEnabled(on) } }))
+                    if !healthSaver.status.isEmpty {
+                        Text(healthSaver.status).font(.footnote).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Apple Health")
+                } footer: {
+                    Text("Each finished workout and treadmill session is saved as an indoor walk or run: the real times, distance, active calories, your heart rate and the climb. Health shows the source as \"Spotify\" because of how the app is signed.")
                 }
 
                 Section {

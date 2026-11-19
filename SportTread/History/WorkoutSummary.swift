@@ -5,6 +5,8 @@ struct SessionSample: Codable, Hashable {
     var t: Int          // seconds of moving time
     var mph: Double
     var incline: Double
+    /// Heart rate at that moment, when a sensor was connected
+    var bpm: Int? = nil
 }
 
 /// Collects a sample every 5 seconds while a workout or treadmill session runs.
@@ -17,11 +19,11 @@ struct SampleLog: Codable {
         lastT = -5
     }
 
-    mutating func add(elapsed: TimeInterval, mph: Double, incline: Double) {
+    mutating func add(elapsed: TimeInterval, mph: Double, incline: Double, bpm: Int? = nil) {
         let t = Int(elapsed)
         guard t - lastT >= 5 else { return }
         lastT = t
-        samples.append(SessionSample(t: t, mph: (mph * 100).rounded() / 100, incline: (incline * 10).rounded() / 10))
+        samples.append(SessionSample(t: t, mph: (mph * 100).rounded() / 100, incline: (incline * 10).rounded() / 10, bpm: bpm))
     }
 }
 
@@ -39,6 +41,9 @@ struct WorkoutSummary: Codable, Hashable {
     /// ACSM equations from speed, incline and body weight; an estimate
     var calories: Int
     var weightLb: Double
+    /// Heart rate over the session, when a sensor was connected
+    var avgBpm: Int? = nil
+    var peakBpm: Int? = nil
     /// Readings for the chart (at most `maxSamples`)
     var samples: [SessionSample]
 
@@ -98,11 +103,15 @@ struct WorkoutSummary: Codable, Hashable {
             kcal += perMinute * step / 60
         }
         let avgMph = movingSeconds > 0 ? miles / (Double(movingSeconds) / 3600) : 0
+        let beats = samples.compactMap(\.bpm).filter { $0 > 0 }
         return WorkoutSummary(
             miles: miles, movingSeconds: movingSeconds, avgMph: avgMph, topMph: topMph,
             avgIncline: movingSamples > 0 ? inclineSum / Double(movingSamples) : 0,
             topIncline: topIncline, elevationFeet: elevation, calories: Int(kcal.rounded()),
-            weightLb: weightLb, samples: thinned(samples))
+            weightLb: weightLb,
+            avgBpm: beats.isEmpty ? nil : Int((Double(beats.reduce(0, +)) / Double(beats.count)).rounded()),
+            peakBpm: beats.max(),
+            samples: thinned(samples))
     }
 
     /// Keeps the chart data small: every n-th sample when there are more than `maxSamples`.

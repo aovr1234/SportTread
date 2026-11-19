@@ -85,17 +85,20 @@ final class Coach: ObservableObject {
             rejected = "it didn't pass the safety check"
         } else if resolved.minutes >= 20, SafetyCheck.isFlat(safe.steps) {
             rejected = "it was one flat pace"
-        } else if !SafetyCheck.matchesKind(safe.steps, kind: resolved.kind, minutes: resolved.minutes) {
+        } else if !SafetyCheck.matchesKind(safe.steps, kind: resolved.kind, minutes: resolved.minutes, effort: resolved.effectiveEffort) {
             rejected = "it didn't look like \(resolved.kind.rawValue.lowercased())"
         } else if resolved.kind == .intervals, resolved.minutes >= 20,
                   !SafetyCheck.lengthIsClose(made.totalSeconds, to: resolved.minutes * 60) {
             rejected = "its own steps added up to \(Self.clock(made.totalSeconds)) instead of \(resolved.minutes):00"
         } else if resolved.kind == .intervals,
                   let problem = SafetyCheck.intervalProblem(safe.steps, comfortable: comfortable,
-                                                            intensity: resolved.intensity, minutes: resolved.minutes) {
+                                                            intensity: resolved.intensity, minutes: resolved.minutes,
+                                                            effort: resolved.effectiveEffort) {
             rejected = problem
         } else if let problem = SafetyCheck.easyPaceProblem(safe.steps, kind: resolved.kind,
                                                             intensity: resolved.intensity, comfortable: comfortable) {
+            rejected = problem
+        } else if let problem = SafetyCheck.inclineProblem(safe.steps, request: resolved, comfortable: comfortable) {
             rejected = problem
         }
         return (safe, rejected)

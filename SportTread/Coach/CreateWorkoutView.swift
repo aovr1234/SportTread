@@ -37,6 +37,20 @@ struct CreateWorkoutView: View {
                         ForEach(WorkoutRequest.Intensity.allCases) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Incline").font(.footnote).foregroundStyle(.secondary)
+                        Picker("Incline", selection: $request.incline) {
+                            ForEach(WorkoutRequest.InclineChoice.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Make it hard with").font(.footnote).foregroundStyle(.secondary)
+                        Picker("Make it hard with", selection: $request.effortFrom) {
+                            ForEach(WorkoutRequest.EffortFrom.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                    }
                 }
 
                 Section {

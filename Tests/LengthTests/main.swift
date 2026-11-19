@@ -376,6 +376,161 @@ check(SafetyCheck.intervalProblem(easyOVH, comfortable: 3.0, intensity: .easy, m
 check(SafetyCheck.easyPaceProblem(easyOVH, kind: .intervals, intensity: .easy, comfortable: 3.0) == nil, "the good Easy interval workout was rejected by the easy pace check")
 check(SafetyCheck.matchesKind(easyOVH, kind: .intervals, minutes: 60), "the good Easy interval workout doesn't pass the type check")
 
+// Heart-rate messages (fix 38)
+func hr(_ bytes: [UInt8]) -> HeartRateParser.Reading? { HeartRateParser.parse(Data(bytes)) }
+check(hr([0x00, 72]) == HeartRateParser.Reading(bpm: 72, contact: nil, rr: []), "plain 8-bit heart rate")
+check(hr([0x01, 0x2C, 0x01])?.bpm == 300, "16-bit heart rate 0x012C should be 300")
+check(hr([0x10, 70, 0x00, 0x04]) == HeartRateParser.Reading(bpm: 70, contact: nil, rr: [1000]), "beat interval 1024/1024 s should be 1000 ms")
+check(hr([0x06, 80])?.contact == true && hr([0x04, 80])?.contact == false, "contact flags")
+check(hr([0x18, 90, 0x10, 0x00, 0x00, 0x04])?.rr == [1000] && hr([0x18, 90, 0x10, 0x00, 0x00, 0x04])?.bpm == 90, "energy field must be skipped")
+check(hr([]) == nil && hr([0x00]) == nil && hr([0x01, 0x10]) == nil, "short messages must be refused")
+var beatLog = SampleLog()
+for second in stride(from: 0, to: 60, by: 1) { beatLog.add(elapsed: Double(second), mph: 3.0, incline: 1.0, bpm: second < 30 ? 100 : 140) }
+let beatSummary = WorkoutSummary.make(samples: beatLog.samples, miles: 0.05, movingSeconds: 60, weightLb: 170)
+check(beatSummary.avgBpm == 120 && beatSummary.peakBpm == 140, "heart rate summary \(String(describing: beatSummary.avgBpm)) / \(String(describing: beatSummary.peakBpm)), expected 120 / 140")
+check(walk.avgBpm == nil && walk.peakBpm == nil, "a session without a sensor must have no heart rate")
+
+// Heart-rate hold (fixes 39 and 42): against a simulated heart that follows speed and incline with a 30 s lag
+func simulateHold(control: HeartRateHold.Control, target: Int, limits: HeartRateHold.Limits, seconds: Int)
+    -> (bpm: Double, mph: Double, incline: Double, warned: Bool) {
+    var hold = HeartRateHold(target: target, control: control)
+    var bpm = 118.0
+    var mph = 3.0
+    var incline = 0.0
+    var warned = false
+    let start = Date(timeIntervalSince1970: 2_000_000)
+    for second in 1...seconds {
+        let now = start.addingTimeInterval(Double(second))
+        bpm += (70 + 25 * (mph - 1) + 4 * incline - bpm) / 30
+        hold.add(bpm: Int(bpm.rounded()), at: now)
+        switch hold.evaluate(now: now, baseMph: 3.0, baseIncline: 0, limits: limits, signalFresh: true) {
+        case .change(let ds, let di, _):
+            mph += ds
+            incline += di
+        case .warn:
+            warned = true
+        case .none:
+            break
+        }
+    }
+    return (bpm, mph, incline, warned)
+}
+let wide = HeartRateHold.Limits(minMph: 1.0, maxMph: 4.0, maxIncline: 6.0)
+for control in HeartRateHold.Control.allCases {
+    let result = simulateHold(control: control, target: 135, limits: wide, seconds: 900)
+    check(abs(result.bpm - 135) <= 6, "hold \(control.rawValue): heart rate ended at \(Int(result.bpm)), target 135")
+    check(result.mph <= 4.0001 && result.mph >= 1.0 && result.incline >= -0.0001 && result.incline <= 6.0001,
+          "hold \(control.rawValue) left its limits: \(result.mph) mph, \(result.incline)%")
+}
+let tight = simulateHold(control: .speed, target: 170, limits: HeartRateHold.Limits(minMph: 1.0, maxMph: 3.2, maxIncline: 4), seconds: 900)
+check(tight.mph <= 3.2001 && tight.warned, "a target out of reach must stop at the speed limit and say so (speed \(tight.mph))")
+let lowTarget = simulateHold(control: .speed, target: 100, limits: wide, seconds: 900)
+check(lowTarget.mph >= 1.0 - 0.0001 && lowTarget.bpm < 118, "a low target must slow down but not below the minimum speed")
+var guardHold = HeartRateHold(target: 140, control: .speed)
+let t0h = Date(timeIntervalSince1970: 3_000_000)
+for second in 1...5 { guardHold.add(bpm: 170, at: t0h.addingTimeInterval(Double(second))) }
+if case .change(let ds, _, let text) = guardHold.evaluate(now: t0h.addingTimeInterval(6), baseMph: 3.0, baseIncline: 0, limits: wide, signalFresh: true) {
+    check(abs(ds + 0.3) < 0.001 && text.contains("far above"), "a heart rate 30 over the target should cut the speed by 0.3 mph and say so, got \(ds): \(text)")
+} else {
+    check(false, "a heart rate far above the target didn't slow the belt")
+}
+check(guardHold.evaluate(now: t0h.addingTimeInterval(7), baseMph: 3.0, baseIncline: 0, limits: wide, signalFresh: false) != .none, "no signal must give a warning, not a change")
+check(guardHold.evaluate(now: t0h.addingTimeInterval(8), baseMph: 3.0, baseIncline: 0, limits: wide, signalFresh: true) == .none, "adjustments must be at least 15 s apart")
+var handHold = HeartRateHold(target: 140, control: .speed)
+for second in 1...5 { handHold.add(bpm: 120, at: t0h.addingTimeInterval(Double(second))) }
+handHold.userChanged(at: t0h.addingTimeInterval(5))
+check(handHold.evaluate(now: t0h.addingTimeInterval(20), baseMph: 3.0, baseIncline: 0, limits: wide, signalFresh: true) == .none,
+      "the hold must wait 45 s after a change by hand")
+
+// The ends of a workout are found by name, including "Finish" (fix 35)
+let finishWorkout = Workout(name: "ai", summary: "", steps: [
+    WorkoutStep(label: "Warm-up", seconds: 120, mph: 2.0, incline: 0), WorkoutStep(label: "Warm-up 2", seconds: 180, mph: 2.5, incline: 0),
+    WorkoutStep(label: "Block 1", seconds: 900, mph: 3.0, incline: 1), WorkoutStep(label: "Block 2", seconds: 900, mph: 3.2, incline: 2),
+    WorkoutStep(label: "Block 3", seconds: 1200, mph: 3.0, incline: 0), WorkoutStep(label: "Cool down", seconds: 180, mph: 2.5, incline: 0),
+    WorkoutStep(label: "Finish", seconds: 120, mph: 2.0, incline: 0),
+])
+let finishFixed = SafetyCheck.trimmedEnds(finishWorkout)
+check(finishFixed.steps.map(\.label) == ["Warm-up", "Ease in", "Block 1", "Block 2", "Block 3", "Ease out", "Cool-down"],
+      "labels with Finish: \(finishFixed.steps.map(\.label))")
+check(finishFixed.totalSeconds == finishWorkout.totalSeconds, "the ends clean-up changed the total")
+
+// Live coach answers from a cloud model (fix 34)
+let editReply = "Here you go: {\"summary\": \"Hills added.\", \"isChange\": true, \"changeCurrentStep\": false, \"currentMph\": 3.0, \"currentIncline\": 0, \"remaining\": [{\"label\": \"Recover\", \"seconds\": 90, \"mph\": 2.7, \"incline\": 3}]}"
+let edit = WorkoutPrompt.parseEdit(editReply)
+check(edit?.isChange == true && edit?.steps.count == 1 && edit?.steps.first?.incline == 3 && edit?.summary == "Hills added.", "a live edit reply wasn't read correctly")
+let hello = WorkoutPrompt.parseEdit("{\"summary\": \"Hi! Tell me what to change.\", \"isChange\": false, \"changeCurrentStep\": false, \"remaining\": []}")
+check(hello?.isChange == false && hello?.steps.isEmpty == true, "a greeting reply should be read as no change")
+check(WorkoutPrompt.parseEdit("nothing here") == nil && WorkoutPrompt.parseEdit("{\"summary\": \"x\"}") == nil, "a reply without steps was accepted as an edit")
+
+// Incline choices and effort (fix 41), joint limits and interval lengths (fix 36)
+var painful = WorkoutRequest()
+painful.notes = "my legs are a bit sore"
+check(painful.gentle && painful.effectiveIncline == .none, "a note about sore legs should mean no incline")
+painful.notes = "legs are sore but add some hills"
+check(!painful.gentle && painful.effectiveIncline == .some, "asking for hills overrides the sore note")
+var steep = WorkoutRequest()
+steep.effortFrom = .incline
+check(steep.effectiveIncline == .lots && steep.effectiveEffort == .incline, "effort from incline means lots of incline")
+steep.incline = .none
+check(steep.effectiveIncline == .none && steep.effectiveEffort == .mix, "no incline wanted cancels the incline effort")
+var fastOnly = WorkoutRequest()
+fastOnly.incline = .lots
+fastOnly.effortFrom = .speed
+check(fastOnly.effectiveIncline == .some, "effort from speed keeps the incline at some")
+check(SafetyCheck.inclineCap(forMph: 3.0) == 10 && SafetyCheck.inclineCap(forMph: 4.0) == 8 && SafetyCheck.inclineCap(forMph: 5.0) == 6, "speed and incline cap")
+let steepFast = SafetyCheck.repair(Workout(name: "x", summary: "", steps: [
+    WorkoutStep(label: "Warm-up", seconds: 600, mph: 2.0, incline: 0), WorkoutStep(label: "Hard", seconds: 1200, mph: 5.0, incline: 9),
+    WorkoutStep(label: "Cool-down", seconds: 600, mph: 2.0, incline: 0),
+]), totalMinutes: 40)
+check(steepFast.steps.allSatisfy { $0.incline <= SafetyCheck.inclineCap(forMph: $0.mph) + 0.001 }, "repair left a steep and fast step")
+check(zip(steepFast.steps, steepFast.steps.dropFirst()).allSatisfy { $1.incline - $0.incline <= SafetyCheck.maxInclineJump + 0.001 }, "repair left an incline jump over 3%")
+
+let comfortable0 = TemplateCoach.baseSpeed(history: [])
+for minutes in stride(from: 20, through: 90, by: 5) {
+    for kind in [WorkoutRequest.Kind.walk, .jog, .intervals, .hills] {
+        for intensity in WorkoutRequest.Intensity.allCases {
+            for choice in WorkoutRequest.InclineChoice.allCases {
+                for effort in WorkoutRequest.EffortFrom.allCases {
+                    for sore in [false, true] {
+                        var r = WorkoutRequest()
+                        r.minutes = minutes
+                        r.kind = kind
+                        r.intensity = intensity
+                        r.incline = choice
+                        r.effortFrom = effort
+                        if sore { r.notes = "my legs are sore" }
+                        let w = TemplateCoach.make(r, history: [])
+                        let name = "rules \(kind.rawValue)/\(intensity.rawValue) incline \(choice.rawValue) effort \(effort.rawValue)\(sore ? " sore" : "") \(minutes) min"
+                        check(w.totalSeconds == minutes * 60 && w.problems.isEmpty, "\(name): length \(w.totalSeconds) or problems \(w.problems)")
+                        for i in w.steps.indices {
+                            check(w.steps[i].incline <= SafetyCheck.inclineCap(forMph: w.steps[i].mph) + 0.001, "\(name): steep and fast at step \(i + 1)")
+                            if i > 0 { check(w.steps[i].incline - w.steps[i - 1].incline <= 3.001, "\(name): incline jumps at step \(i + 1)") }
+                        }
+                        check(SafetyCheck.matchesKind(w.steps, kind: kind, minutes: minutes, effort: r.effectiveEffort), "\(name): doesn't pass its own type check")
+                        check(SafetyCheck.inclineProblem(w.steps, request: r, comfortable: comfortable0) == nil,
+                              "\(name): incline check says \(SafetyCheck.inclineProblem(w.steps, request: r, comfortable: comfortable0) ?? "")")
+                        if sore && kind != .hills { check(w.steps.allSatisfy { $0.incline == 0 }, "\(name): a sore note must keep the incline at 0") }
+                    }
+                }
+            }
+        }
+    }
+}
+for (minutes, fastSeconds) in [(20, 60), (30, 60), (31, 90), (50, 90), (51, 120), (90, 120)] {
+    var r = WorkoutRequest()
+    r.minutes = minutes
+    r.kind = .intervals
+    r.incline = .none
+    let w = TemplateCoach.make(r, history: [])
+    let fasts = w.steps.filter { $0.label.hasPrefix("Fast") }
+    check(!fasts.isEmpty && fasts.allSatisfy { $0.seconds == fastSeconds }, "intervals for \(minutes) min should use \(fastSeconds) s fast steps, got \(fasts.map(\.seconds))")
+}
+var sixty = WorkoutRequest()
+sixty.minutes = 60
+sixty.kind = .intervals
+let sixtyFasts = TemplateCoach.make(sixty, history: []).steps.filter { $0.label.hasPrefix("Fast") }.count
+check(sixtyFasts >= 8 && sixtyFasts <= 12, "60 min of intervals should be about 10 pairs, got \(sixtyFasts)")
+
 // 6. Treadmill command rules (CommandPacer): replayed second by second, no Bluetooth
 let t0 = Date(timeIntervalSince1970: 1_000_000)
 func at(_ seconds: Double) -> Date { t0.addingTimeInterval(seconds) }

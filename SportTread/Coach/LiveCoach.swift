@@ -42,6 +42,8 @@ final class LiveCoach: ObservableObject {
         var currentMph: Double?
         var currentIncline: Double?
         var isHarder: Bool
+        /// False when the request wasn't a change (a greeting, a question): only the summary is shown
+        var isChange = true
     }
 
     @Published private(set) var isWorking = false
@@ -66,33 +68,95 @@ final class LiveCoach: ObservableObject {
         isWorking = true
         defer { isWorking = false }
 
+        guard let target = Self.laterTarget(for: request, runner: runner) else {
+            message = "That doesn't leave enough time after this step."
+            return
+        }
+
+        // 1. A fast cloud service, when cloud AI is on
+        if let proposal = await cloudEdit(request: request, current: current, runner: runner) {
+            finish(proposal, target: target, current: current, runner: runner)
+            return
+        }
+
+        // 2. Apple Intelligence on the phone
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *), AppleIntelligence.isAvailable {
-            guard let target = Self.laterTarget(for: request, runner: runner) else {
-                message = "That doesn't leave enough time after this step."
-                return
-            }
             do {
-                var proposal = try await AppleIntelligence.edit(
+                let proposal = try await AppleIntelligence.edit(
                     request: request, current: current, remaining: runner.remainingSteps,
                     deviations: Deviation.summary(runner.deviations))
-                // The AI's words are never trusted: the later steps must add up to the exact time
-                if target == 0 {
-                    proposal.remaining = []
-                } else if let fitted = WorkoutEdits.fitRemaining(proposal.remaining, current: current, to: target) {
-                    proposal.remaining = fitted
-                } else {
-                    message = "That doesn't leave enough time after this step."
-                    return
-                }
-                route(proposal, current: current, runner: runner)
+                finish(proposal, target: target, current: current, runner: runner)
             } catch {
                 message = "Apple Intelligence couldn't do that: \(error.localizedDescription)"
             }
             return
         }
         #endif
-        message = "Typed and spoken requests need Apple Intelligence. The quick buttons still work."
+        message = "Typed and spoken requests need Apple Intelligence or a cloud AI key. The quick buttons still work."
+    }
+
+    /// Checks and applies the answer of either engine. The AI's words are never trusted.
+    private func finish(_ proposal: Proposal, target: Int, current: WorkoutStep, runner: WorkoutRunner) {
+        var proposal = proposal
+        guard proposal.isChange else {
+            message = proposal.summary
+            dlog("Live coach: nothing to change, replied \"\(proposal.summary)\"")
+            return
+        }
+        // An answer that stops early (the model ran out of room) keeps the untouched steps as they were,
+        // instead of stretching what came back to fill the time
+        let remaining = runner.remainingSteps
+        let later = runner.laterSeconds
+        let returned = proposal.remaining.reduce(0) { $0 + $1.seconds }
+        if target == later, proposal.remaining.count < remaining.count, Double(returned) < 0.85 * Double(later) {
+            dlog("Live coach: the answer stopped after \(proposal.remaining.count) of \(remaining.count) steps; the rest is kept as it was")
+            proposal.remaining += remaining.dropFirst(proposal.remaining.count)
+        }
+        // The later steps must add up to the exact time
+        if target == 0 {
+            proposal.remaining = []
+        } else if let fitted = WorkoutEdits.fitRemaining(proposal.remaining, current: current, to: target) {
+            proposal.remaining = fitted
+        } else {
+            message = "That doesn't leave enough time after this step."
+            return
+        }
+        route(proposal, current: current, runner: runner)
+    }
+
+    /// Asks the fast cloud services (Groq, Gemini, Cohere; the slow ones are skipped mid-workout), waiting at
+    /// most 25 s for each. nil when cloud AI is off or none of them answered.
+    private func cloudEdit(request: String, current: WorkoutStep, runner: WorkoutRunner) async -> Proposal? {
+        let settings = CloudSettings.shared
+        let providers = settings.ready.filter { ["groq", "gemini", "cohere"].contains($0.id) }
+        guard !providers.isEmpty else { return nil }
+        let prompt = WorkoutPrompt.liveRequest(request, current: current, remaining: runner.remainingSteps,
+                                               deviations: Deviation.summary(runner.deviations))
+        let messages: [[String: String]] = [
+            ["role": "system", "content": WorkoutPrompt.editRules + "\n\n" + WorkoutPrompt.editJSONRule],
+            ["role": "user", "content": prompt],
+        ]
+        dlog("Live coach: asking " + providers.map(\.name).joined(separator: ", ") + "\n" + prompt)
+        for provider in providers {
+            do {
+                let reply = try await CloudClient.chat(provider: provider, key: settings.key(for: provider.id),
+                                                       messages: messages, maxTokens: 4500, timeout: 25)
+                guard let edit = WorkoutPrompt.parseEdit(reply.text) else {
+                    dlog("Live coach: \(provider.name) reply couldn't be read. It began: " + String(reply.text.prefix(200)))
+                    continue
+                }
+                dlog(String(format: "Live coach: %@ answered in %.1f s: \"%@\", change: %@\n", provider.name, reply.seconds, edit.summary,
+                            edit.isChange ? "yes" : "no") + Coach.describe(edit.steps))
+                return Proposal(summary: edit.summary, request: request, remaining: edit.steps,
+                                currentMph: edit.changeCurrentStep ? edit.currentMph : nil,
+                                currentIncline: edit.changeCurrentStep ? edit.currentIncline : nil,
+                                isHarder: false, isChange: edit.isChange)
+            } catch {
+                dlog("Live coach: \(provider.name) failed: \(error.localizedDescription)")
+            }
+        }
+        return nil
     }
 
     /// Seconds the steps after the current one must add up to for this request: unchanged unless the
@@ -189,7 +253,9 @@ final class LiveCoach: ObservableObject {
 @available(iOS 26.0, *)
 @Generable
 struct GeneratedEdit {
-    @Guide(description: "One short sentence telling the runner what changed, e.g. Hills capped at 4% and the last interval removed.")
+    @Guide(description: "False if the request is a greeting, a question, or asks for nothing to change; true if the workout should change")
+    var isChange: Bool
+    @Guide(description: "One short sentence telling the runner what changed, e.g. Hills capped at 4% and the last interval removed. For a greeting or a question, this is the reply.")
     var summary: String
     @Guide(description: "True only if the request is about right now (like 'easier now' or 'slow down'), so the current step changes too")
     var changeCurrentStep: Bool
@@ -197,7 +263,7 @@ struct GeneratedEdit {
     var currentMph: Double
     @Guide(description: "New incline for the current step in percent; used only if changeCurrentStep is true")
     var currentIncline: Double
-    @Guide(description: "All steps after the current one, in order, after applying the request", .maximumCount(24))
+    @Guide(description: "All steps after the current one, in order, after applying the request", .maximumCount(80))
     var remaining: [GeneratedStep]
 }
 
@@ -205,30 +271,10 @@ struct GeneratedEdit {
 extension AppleIntelligence {
     private static var loggedEditInstructions = false
 
-    private static let editInstructions = """
-        You adjust a treadmill workout that is already running, following the runner's request.
-        Rules:
-        - Change only what the request asks for. Keep step labels unless a step is removed or added.
-        - Keep the total remaining time the same unless the request is about time (shorter, longer, add or remove minutes).
-        - Keep the cool-down at the end.
-        - Speeds are in miles per hour (0.5 to 10), incline in percent (0 to 10).
-        - Never raise the speed by more than 1.5 mph from one step to the next.
-        - Each step lasts between 30 seconds and 15 minutes.
-        - If the runner mentions pain, tiredness or feeling unwell, make it easier, never harder.
-        """
-
     static func edit(request: String, current: WorkoutStep, remaining: [WorkoutStep],
                      deviations: String) async throws -> LiveCoach.Proposal {
-        func line(_ s: WorkoutStep) -> String {
-            "- \(s.label): \(s.seconds) s at \(String(format: "%.1f", s.mph)) mph, \(String(format: "%g", s.incline))% incline"
-        }
-        let prompt = """
-            Current step: \(line(current))
-            Remaining steps:
-            \(remaining.isEmpty ? "(none)" : remaining.map(line).joined(separator: "\n"))
-            What the runner has done so far: \(deviations)
-            The runner asks: \(request)
-            """
+        let editInstructions = WorkoutPrompt.editRules
+        let prompt = WorkoutPrompt.liveRequest(request, current: current, remaining: remaining, deviations: deviations)
         if !loggedEditInstructions {
             loggedEditInstructions = true
             dlog("Live coach instructions (fixed text sent with every request):\n" + editInstructions)
@@ -243,7 +289,7 @@ extension AppleIntelligence {
             remaining: made.remaining.map { WorkoutStep(label: $0.label, seconds: $0.seconds, mph: $0.mph, incline: $0.incline) },
             currentMph: made.changeCurrentStep ? made.currentMph : nil,
             currentIncline: made.changeCurrentStep ? made.currentIncline : nil,
-            isHarder: false)
+            isHarder: false, isChange: made.isChange)
     }
 }
 #endif

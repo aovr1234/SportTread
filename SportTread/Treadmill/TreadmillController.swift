@@ -57,6 +57,9 @@ final class TreadmillController: NSObject, ObservableObject {
         }
     }
 
+    /// The latest heart-rate reading (set by the app); read when the session samples are taken.
+    var heartRateProvider: (() -> (bpm: Int, at: Date)?)?
+
     /// Called when a treadmill-mode session ends, for history.
     var onSessionEnd: ((HistoryEntry) -> Void)?
 
@@ -309,7 +312,7 @@ final class TreadmillController: NSObject, ObservableObject {
             }
             sessionMaxMph = max(sessionMaxMph, speedMph ?? 0)
             sessionMaxIncline = max(sessionMaxIncline, incline ?? 0)
-            sessionLog.add(elapsed: movingSeconds, mph: speedMph ?? 0, incline: incline ?? 0)
+            sessionLog.add(elapsed: movingSeconds, mph: speedMph ?? 0, incline: incline ?? 0, bpm: heartRateProvider?()?.bpm)
             if manualActivity.isActive {
                 manualActivity.update(manualState(now: now, stopped: false))
             } else {
