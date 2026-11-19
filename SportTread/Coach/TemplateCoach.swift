@@ -257,13 +257,13 @@ enum SafetyCheck {
     }
 
     /// Why an Intervals workout isn't a proper interval workout, or nil: a fast step (0.5 mph or more above
-    /// the comfortable speed) longer than 3.5 min, faster than comfortable + 0.8 mph (Easy), + 1.5 (Moderate)
-    /// or + 2.0 (Hard), or with no recovery after it. Checked for workouts of 20 minutes or more.
+    /// the comfortable speed) longer than 3.5 min, faster than comfortable + 1.0 mph (Easy), + 1.5 (Moderate)
+    /// or + 2.0 (Hard) (the same limits the prompt states), or with no recovery after it. Checked for workouts of 20 minutes or more.
     static func intervalProblem(_ steps: [WorkoutStep], comfortable: Double,
                                 intensity: WorkoutRequest.Intensity, minutes: Int) -> String? {
         guard minutes >= 20 else { return nil }
         let main = mainSteps(steps)
-        let allowed = comfortable + (intensity == .easy ? 0.8 : (intensity == .moderate ? 1.5 : 2.0)) + 0.05
+        let allowed = comfortable + WorkoutPrompt.fastRange(intensity).high + 0.05
         for (index, step) in main.enumerated() where step.mph >= comfortable + 0.5 {
             if step.seconds > 210 {
                 return String(format: "a fast step lasts %d:%02d", step.seconds / 60, step.seconds % 60)
@@ -278,13 +278,13 @@ enum SafetyCheck {
         return nil
     }
 
-    /// An Easy workout never goes faster than the comfortable speed + 0.8 mph (jogs are exempt: they
+    /// An Easy workout never goes faster than the comfortable speed + 1.0 mph (jogs are exempt: they
     /// start near 4 mph by definition).
     static func easyPaceProblem(_ steps: [WorkoutStep], kind: WorkoutRequest.Kind,
                                 intensity: WorkoutRequest.Intensity, comfortable: Double) -> String? {
         guard intensity == .easy, kind != .jog else { return nil }
         let fastest = mainSteps(steps).map(\.mph).max() ?? 0
-        return fastest > comfortable + 0.85 ? String(format: "it went up to %.1f mph, faster than an easy pace", fastest) : nil
+        return fastest > comfortable + WorkoutPrompt.fastRange(.easy).high + 0.05 ? String(format: "it went up to %.1f mph, faster than an easy pace", fastest) : nil
     }
 
     /// The steps between the warm-up and the cool-down.

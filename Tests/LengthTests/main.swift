@@ -330,6 +330,52 @@ var noRecovery = intervalAI
 noRecovery[2].mph = 4.2   // the recovery after the first fast step is fast too
 check(SafetyCheck.intervalProblem(noRecovery, comfortable: 3.0, intensity: .moderate, minutes: 60) != nil, "a fast step with no recovery passed")
 
+// Cloud AI (fixes 31 and 32): the prompt, its examples, and reading answers
+for kind in [WorkoutRequest.Kind.walk, .jog, .intervals, .hills] {
+    let steps = WorkoutPrompt.exampleSteps(for: kind)
+    let example = Workout(name: "example", summary: "", steps: steps)
+    check(example.totalSeconds == 2400, "the \(kind.rawValue) example adds up to \(example.totalSeconds) s, not 2400")
+    check(example.problems.isEmpty, "the \(kind.rawValue) example has problems: \(example.problems)")
+    check(SafetyCheck.matchesKind(steps, kind: kind, minutes: 40), "the \(kind.rawValue) example doesn't pass its own type check")
+    check(!SafetyCheck.isFlat(steps), "the \(kind.rawValue) example is flat")
+    if kind == .intervals {
+        check(SafetyCheck.intervalProblem(steps, comfortable: 3.0, intensity: .moderate, minutes: 40) == nil,
+              "the intervals example fails the interval check: \(SafetyCheck.intervalProblem(steps, comfortable: 3.0, intensity: .moderate, minutes: 40) ?? "")")
+    }
+    for i in 1..<steps.count {
+        check(steps[i].mph - steps[i - 1].mph <= SafetyCheck.maxSpeedJump + 0.001, "the \(kind.rawValue) example jumps by more than 1.5 mph at step \(i + 1)")
+    }
+    let cleaned = SafetyCheck.trimmedEnds(example)
+    check(cleaned.steps.map(\.seconds) == steps.map(\.seconds) && cleaned.steps.map(\.label) == steps.map(\.label),
+          "the \(kind.rawValue) example is changed by the end clean-up")
+    let reread = WorkoutPrompt.parse(WorkoutPrompt.exampleJSON(for: kind))
+    check(reread?.steps.count == steps.count && reread?.totalSeconds == 2400, "the \(kind.rawValue) example JSON doesn't read back")
+}
+let fenced = "Sure! Here you go:\n```json\n{\"name\": \"Test\", \"summary\": \"x\", \"steps\": [{\"label\": \"Warm-up\", \"seconds\": 120, \"mph\": 2.0, \"incline\": 0}, {\"label\": \"Main\", \"seconds\": \"600\", \"mph\": \"3.0\"}]}\n```\nEnjoy!"
+let parsed = WorkoutPrompt.parse(fenced)
+check(parsed?.steps.count == 2 && parsed?.steps[1].seconds == 600 && parsed?.steps[1].mph == 3.0 && parsed?.steps[1].incline == 0,
+      "a fenced reply with text-number fields wasn't read correctly")
+check(WorkoutPrompt.parse("I could not do that.") == nil, "a reply without JSON was accepted")
+check(WorkoutPrompt.parse("{\"steps\": []}") == nil, "an empty steps list was accepted")
+check(WorkoutPrompt.parse("{\"steps\": [{\"label\": \"a\"}]}") == nil, "a step without seconds was accepted")
+check(WorkoutPrompt.typeGuide(.intervals, base: 3.0, intensity: .easy).contains("3.5 to 4.0 mph"), "the Easy interval guide should say 3.5 to 4.0 mph")
+check(WorkoutPrompt.typeGuide(.intervals, base: 3.0, intensity: .hard).contains("4.2 to 5.0 mph"), "the Hard interval guide should say 4.2 to 5.0 mph")
+check(WorkoutPrompt.retry(reason: "a fast step lasts 9:00", seconds: 3600).contains("a fast step lasts 9:00")
+      && WorkoutPrompt.retry(reason: "x", seconds: 3600).contains("3600"), "the retry message lacks the reason or the length")
+check(WorkoutPrompt.cloudInstructions(for: .intervals).contains(WorkoutPrompt.rules) && WorkoutPrompt.cloudInstructions(for: .intervals).contains("JSON"),
+      "the cloud instructions lack the rules or the JSON format")
+// The Easy interval workout the free OVHcloud model made (2 min at 4.0 mph, 3 min at 3.0 mph) is accepted: the prompt and the checks agree
+var easyOVH: [WorkoutStep] = [WorkoutStep(label: "Warm-up", seconds: 120, mph: 2.5, incline: 0), WorkoutStep(label: "Ease in", seconds: 180, mph: 3.0, incline: 0)]
+for round in 1...10 {
+    easyOVH.append(WorkoutStep(label: "Interval \(round) - Fast", seconds: 120, mph: 4.0, incline: 0))
+    easyOVH.append(WorkoutStep(label: "Interval \(round) - Recovery", seconds: 180, mph: 3.0, incline: 0))
+}
+easyOVH.append(WorkoutStep(label: "Ease out", seconds: 120, mph: 2.5, incline: 0))
+easyOVH.append(WorkoutStep(label: "Cool-down", seconds: 120, mph: 2.0, incline: 0))
+check(SafetyCheck.intervalProblem(easyOVH, comfortable: 3.0, intensity: .easy, minutes: 60) == nil, "the good Easy interval workout was rejected by the interval check")
+check(SafetyCheck.easyPaceProblem(easyOVH, kind: .intervals, intensity: .easy, comfortable: 3.0) == nil, "the good Easy interval workout was rejected by the easy pace check")
+check(SafetyCheck.matchesKind(easyOVH, kind: .intervals, minutes: 60), "the good Easy interval workout doesn't pass the type check")
+
 // 6. Treadmill command rules (CommandPacer): replayed second by second, no Bluetooth
 let t0 = Date(timeIntervalSince1970: 1_000_000)
 func at(_ seconds: Double) -> Date { t0.addingTimeInterval(seconds) }

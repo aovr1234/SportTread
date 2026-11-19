@@ -51,6 +51,16 @@ struct ContentView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        CloudSettingsView()
+                    } label: {
+                        Label("Cloud AI for workouts", systemImage: "cloud")
+                    }
+                } footer: {
+                    Text("Groq, Gemini and others (free keys) make better workouts than the phone alone. Off until you turn it on.")
+                }
+
+                Section {
                     if diagnostics.recent.isEmpty {
                         Text("Nothing logged yet.").foregroundStyle(.secondary)
                     } else {

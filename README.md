@@ -2,7 +2,7 @@
 
 iPhone app that runs a ProForm 505 CST treadmill without iFit. See [PLAN.md](PLAN.md).
 
-## Current stage: build 0.7.6 (the log shows what was asked and what the AI was told, interval quality check; 0.7.5: the chosen type is checked, warm-up and cool-down only at the ends; 0.7.4: shorter warm-up and cool-down; 0.7.3: diagnostics log, workout recovery, better workouts)
+## Current stage: build 0.7.7 (cloud AI for workouts with a fix-up loop, Easy interval limit; 0.7.6: the log shows what was asked and what the AI was told, interval quality check; 0.7.5: the chosen type is checked, warm-up and cool-down only at the ends; 0.7.4: shorter warm-up and cool-down; 0.7.3: diagnostics log, workout recovery, better workouts)
 Passed so far: milestones 0, 1, 2, 5, the Live Activity and two field tests. On hold: saving to Apple Health,
 heart rate (waits for the Bluetooth sensor), plan reminders and speed guards.
 
@@ -14,7 +14,7 @@ heart rate (waits for the Bluetooth sensor), plan reminders and speed guards.
 Every build first runs the length tests (`Tests/LengthTests`): every workout length from 10 to 90 minutes,
 simulated AI workouts, live edits and reading a length from text must come out exact, or the build fails.
 
-### Test (0.7.6 and earlier; the 0.7.2 list still applies: pacing, resume, summary, Live Activity buttons)
+### Test (0.7.7 and earlier; the 0.7.2 list still applies: pacing, resume, summary, Live Activity buttons)
 | # | Test | Pass when |
 |---|---|---|
 | 1 | Setup → Diagnostics | Lines appear as you use the app (connects, commands, steps); Share log sends `diagnostics.log`; Clear empties it |
@@ -34,6 +34,11 @@ simulated AI workouts, live edits and reading a length from text must come out e
 | 15 | Create a workout, then Setup → Diagnostics → Share log | The log has "Coach request", "Coach note as typed" (your exact words), the readiness text, the full prompt, the AI's answer step by step, and the final steps, plus the fixed instructions once per launch |
 | 16 | Type a request in the live Coach during a workout | The log has "Live coach request", the prompt, the AI's answer and whether it was applied or offered |
 | 17 | Create Intervals, Easy, 60 min | Either real short fast steps with recoveries (nothing above about 3.8 mph for an easy pace), or a card saying the AI's workout was rejected and why |
+| 18 | Setup → Cloud AI for workouts | Switch it on; add a Groq or Gemini key (paste, Save); tap **Test**: it says "Works (n s)"; the key shows "saved in the Keychain" |
+| 19 | Coach tab → create a workout with cloud AI on | The button says "Asking Groq…" (or the service you enabled); the card says "Created with Groq" (or "after one fix"); the steps follow the type you chose |
+| 20 | Same, with Wi-Fi off | It falls back to Apple Intelligence or the rules, with no error screen |
+| 21 | Setup → Diagnostics → Share log after a cloud workout | "cloud AI is on", the prompt, which service answered and how fast, its steps, accepted or rejected and why |
+| 22 | Easy Intervals, 60 min | Fast steps up to about 4.0 mph for a 3.0 mph walker are accepted |
 
 Still to check from 0.7: the treadmill-mode Live Activity (ends 2 min after stopping), readiness, goal plans,
 the workout editor, and deleting history.
@@ -47,4 +52,4 @@ the workout editor, and deleting history.
 - `.github/workflows/build.yml`: macOS build → unsigned IPA
 - `web/treadmill.html`: working Web Bluetooth controller (Chrome/Edge)
 - `design/AppIcon.svg`: app icon source (render with `tools/render_icon.py`)
-- `tools/`: Python BLE scripts used to work out the treadmill protocol
+- `tools/`: Python BLE scripts used to work out the treadmill protocol, and `benchmark_llm.py` (tries the free cloud AI services on the app's own workout requests)

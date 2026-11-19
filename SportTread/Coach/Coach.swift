@@ -10,10 +10,17 @@ final class Coach: ObservableObject {
     @Published private(set) var isWorking = false
     @Published private(set) var note = ""
 
+    /// What the app is doing while it works, shown on the Create button ("Asking Groq…")
+    @Published private(set) var progress = ""
+
     func create(_ request: WorkoutRequest, history: [HistoryEntry],
                 readiness: Readiness.Level? = nil, readinessNote: String? = nil) async -> Workout {
         isWorking = true
-        defer { isWorking = false }
+        progress = ""
+        defer {
+            isWorking = false
+            progress = ""
+        }
 
         // What was asked, exactly as typed (the readiness text the app adds is logged separately)
         dlog("Coach request: \(request.minutes) min, \(request.kind.rawValue), \(request.intensity.rawValue)")
@@ -33,40 +40,29 @@ final class Coach: ObservableObject {
         if let readinessNote {
             resolved.notes += (resolved.notes.isEmpty ? "" : " ") + readinessNote + "."
         }
+        let comfortable = TemplateCoach.baseSpeed(history: history)
 
+        // 1. Cloud AI, when it is on: each enabled service in turn, with up to two fix-ups each
+        if let made = await createWithCloud(request: request, resolved: resolved, history: history, comfortable: comfortable) {
+            return made
+        }
+
+        // 2. Apple Intelligence on the phone
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *), AppleIntelligence.isAvailable {
             do {
+                progress = "Asking Apple Intelligence…"
                 let made = try await AppleIntelligence.workout(for: resolved, history: history)
                 dlog("Coach AI answer: \"\(made.name)\" / \"\(made.summary)\"; \(made.steps.count) steps adding up to "
                      + "\(Self.clock(made.totalSeconds)), asked for \(resolved.minutes):00\n" + Self.describe(made.steps))
-                let safe = SafetyCheck.trimmedEnds(SafetyCheck.snapped(SafetyCheck.repair(made, totalMinutes: resolved.minutes)))
-                let comfortable = TemplateCoach.baseSpeed(history: history)
-                var rejected: String?
-                if !safe.problems.isEmpty || safe.totalSeconds != resolved.minutes * 60 {
-                    rejected = "it didn't pass the safety check"
-                } else if resolved.minutes >= 20, SafetyCheck.isFlat(safe.steps) {
-                    rejected = "it was one flat pace"
-                } else if !SafetyCheck.matchesKind(safe.steps, kind: resolved.kind, minutes: resolved.minutes) {
-                    rejected = "it didn't look like \(resolved.kind.rawValue.lowercased())"
-                } else if resolved.kind == .intervals, resolved.minutes >= 20,
-                          !SafetyCheck.lengthIsClose(made.totalSeconds, to: resolved.minutes * 60) {
-                    rejected = "its own steps added up to \(Self.clock(made.totalSeconds)) instead of \(resolved.minutes):00"
-                } else if resolved.kind == .intervals,
-                          let problem = SafetyCheck.intervalProblem(safe.steps, comfortable: comfortable,
-                                                                    intensity: resolved.intensity, minutes: resolved.minutes) {
-                    rejected = problem
-                } else if let problem = SafetyCheck.easyPaceProblem(safe.steps, kind: resolved.kind,
-                                                                    intensity: resolved.intensity, comfortable: comfortable) {
-                    rejected = problem
-                }
-                if let rejected {
+                let judged = judge(made, resolved: resolved, comfortable: comfortable)
+                if let rejected = judged.rejected {
                     note = "Apple Intelligence's workout was rejected (\(rejected)), so the built-in rules made this one."
-                    dlog("Coach: AI workout rejected because \(rejected). After repair it was:\n" + Self.describe(safe.steps))
+                    dlog("Coach: AI workout rejected because \(rejected). After repair it was:\n" + Self.describe(judged.safe.steps))
                 } else {
                     note = "Created with Apple Intelligence"
-                    dlog("Coach: AI workout accepted. Final steps:\n" + Self.describe(safe.steps))
-                    return safe
+                    dlog("Coach: AI workout accepted. Final steps:\n" + Self.describe(judged.safe.steps))
+                    return judged.safe
                 }
             } catch {
                 note = "Apple Intelligence couldn't create it (\(error.localizedDescription)), so the built-in rules made this one."
@@ -75,8 +71,95 @@ final class Coach: ObservableObject {
             return Self.logged(Self.exact(TemplateCoach.make(resolved, history: history), minutes: resolved.minutes))
         }
         #endif
+
+        // 3. The built-in rules
         note = "Made with the built-in rules (Apple Intelligence: \(Self.appleIntelligenceStatus))."
         return Self.logged(Self.exact(TemplateCoach.make(resolved, history: history), minutes: resolved.minutes))
+    }
+
+    /// Repairs an AI workout and decides whether it is good enough: the reason it was rejected, or nil.
+    private func judge(_ made: Workout, resolved: WorkoutRequest, comfortable: Double) -> (safe: Workout, rejected: String?) {
+        let safe = SafetyCheck.trimmedEnds(SafetyCheck.snapped(SafetyCheck.repair(made, totalMinutes: resolved.minutes)))
+        var rejected: String?
+        if !safe.problems.isEmpty || safe.totalSeconds != resolved.minutes * 60 {
+            rejected = "it didn't pass the safety check"
+        } else if resolved.minutes >= 20, SafetyCheck.isFlat(safe.steps) {
+            rejected = "it was one flat pace"
+        } else if !SafetyCheck.matchesKind(safe.steps, kind: resolved.kind, minutes: resolved.minutes) {
+            rejected = "it didn't look like \(resolved.kind.rawValue.lowercased())"
+        } else if resolved.kind == .intervals, resolved.minutes >= 20,
+                  !SafetyCheck.lengthIsClose(made.totalSeconds, to: resolved.minutes * 60) {
+            rejected = "its own steps added up to \(Self.clock(made.totalSeconds)) instead of \(resolved.minutes):00"
+        } else if resolved.kind == .intervals,
+                  let problem = SafetyCheck.intervalProblem(safe.steps, comfortable: comfortable,
+                                                            intensity: resolved.intensity, minutes: resolved.minutes) {
+            rejected = problem
+        } else if let problem = SafetyCheck.easyPaceProblem(safe.steps, kind: resolved.kind,
+                                                            intensity: resolved.intensity, comfortable: comfortable) {
+            rejected = problem
+        }
+        return (safe, rejected)
+    }
+
+    /// Tries each enabled cloud service in order. A rejected answer goes back to the same service with the
+    /// exact reason (up to two fix-ups); a service that fails (no key, no internet, free limit reached) is
+    /// skipped. Returns nil when cloud AI is off or nothing acceptable came back.
+    private func createWithCloud(request: WorkoutRequest, resolved: WorkoutRequest, history: [HistoryEntry],
+                                 comfortable: Double) async -> Workout? {
+        let settings = CloudSettings.shared
+        let providers = settings.ready
+        guard !providers.isEmpty else { return nil }
+
+        // What the services see: the request, the note, the comfortable speed and, if allowed, recent workouts
+        var asked = resolved
+        let shared = settings.sendHistory ? history : []
+        if !settings.sendHistory { asked.notes = request.notes }
+        let system = WorkoutPrompt.cloudInstructions(for: asked.kind)
+        let prompt = WorkoutPrompt.request(asked, base: comfortable, history: shared)
+        dlog("Coach: cloud AI is on, trying " + providers.map(\.name).joined(separator: ", ")
+             + (settings.sendHistory ? "" : " (recent workouts and readiness not sent)"))
+        dlog("Coach cloud prompt:\n" + prompt)
+
+        let deadline = Date().addingTimeInterval(150)
+        for provider in providers {
+            var messages: [[String: String]] = [["role": "system", "content": system], ["role": "user", "content": prompt]]
+            for attempt in 0..<3 {
+                if Date() > deadline {
+                    dlog("Coach: the cloud time budget (150 s) is used up")
+                    return nil
+                }
+                progress = attempt == 0 ? "Asking \(provider.name)…" : "\(provider.name): fixing it (try \(attempt + 1) of 3)…"
+                let reply: CloudClient.Reply
+                do {
+                    reply = try await CloudClient.chat(provider: provider, key: settings.key(for: provider.id), messages: messages)
+                } catch {
+                    dlog("Coach: \(provider.name) failed: \(error.localizedDescription). Trying the next one.")
+                    break
+                }
+                dlog(String(format: "Coach: %@ (%@) answered in %.1f s, attempt %d", provider.name, provider.model, reply.seconds, attempt + 1))
+
+                var reason: String
+                if let made = WorkoutPrompt.parse(reply.text) {
+                    dlog("Coach cloud answer: \"\(made.name)\" / \"\(made.summary)\"; \(made.steps.count) steps adding up to "
+                         + "\(Self.clock(made.totalSeconds)), asked for \(resolved.minutes):00\n" + Self.describe(made.steps))
+                    let judged = judge(made, resolved: resolved, comfortable: comfortable)
+                    guard let rejected = judged.rejected else {
+                        note = "Created with \(provider.name)" + (attempt == 0 ? "" : attempt == 1 ? " after one fix" : " after two fixes")
+                        dlog("Coach: \(provider.name) workout accepted. Final steps:\n" + Self.describe(judged.safe.steps))
+                        return judged.safe
+                    }
+                    reason = rejected
+                    dlog("Coach: \(provider.name) workout rejected because \(rejected)")
+                } else {
+                    reason = "the reply wasn't one JSON object with a steps list"
+                    dlog("Coach: \(provider.name) reply couldn't be read. It began: " + String(reply.text.prefix(200)))
+                }
+                messages.append(["role": "assistant", "content": reply.text])
+                messages.append(["role": "user", "content": WorkoutPrompt.retry(reason: reason, seconds: resolved.minutes * 60)])
+            }
+        }
+        dlog("Coach: no cloud service gave an acceptable workout")
+        return nil
     }
 
     private static func logged(_ workout: Workout) -> Workout {
@@ -153,68 +236,12 @@ enum AppleIntelligence {
         }
     }
 
-    private static let instructions = """
-        You are a friendly treadmill coach. You design one treadmill workout as a list of timed steps.
-        Rules:
-        - The steps' seconds must add up to the requested total time.
-        - Start with a warm-up of 3 to 5 minutes in total (never more than 5), in two steps that ramp up
-          by at least 0.5 mph (for example 2.0 then 2.5 mph), and end with a cool-down of about 3 minutes
-          in total (never more than 4) in two steps that ramp down. Most of the time is the main part.
-        - The main part is never one flat step: use at least 3 blocks of 5 to 10 minutes that differ in
-          speed (by 0.2 to 0.5 mph) or in incline (0 to 3 percent). Never give every step the same speed and incline.
-        - If the person is sore, tired or asks for easy, keep the incline at 0 and vary only the speed a little.
-        - Make step lengths whole minutes (multiples of 60 seconds), except interval steps.
-        - The chosen workout type and intensity are required. If the person's note seems to ask for something
-          else, still make that type and intensity and use the note only to adjust how hard it is.
-        - Speeds are in miles per hour. Walking is about 2.5 to 3.8 mph, jogging about 4 to 6 mph.
-          Stay close to the person's comfortable speed and never go above 10 mph.
-        - Incline is 0 to 10 percent.
-        - Never raise the speed by more than 1.5 mph from one step to the next.
-        - Easy means relaxed, moderate means somewhat hard, hard means challenging but safe.
-        - Each step lasts between 30 seconds and 15 minutes.
-        """
-
     private static var loggedInstructions = false
-
-    /// What each type means, so a small model can't read "intervals" as "varied walking".
-    private static func typeGuide(_ kind: WorkoutRequest.Kind, base: Double) -> String {
-        func mph(_ value: Double) -> String { String(format: "%.1f", value) }
-        switch kind {
-        case .intervals:
-            return "Type rules for intervals: the main part repeats at least 5 pairs of a fast step (1 to 3 minutes at \(mph(base + 0.8)) to \(mph(base + 1.5)) mph) and a recovery step (1.5 to 3 minutes at \(mph(base)) mph). It is not a steady walk."
-        case .hills:
-            return "Type rules for hills: the main part is blocks of 2 to 4 minutes whose incline changes between 2 and 8 percent, with the speed staying near \(mph(base)) mph."
-        case .jog:
-            return "Type rules for jog: the main part is jogging at 4 to 6 mph in blocks of 5 to 10 minutes."
-        case .walk:
-            return "Type rules for walk: the main part is walking at 2.5 to 3.8 mph in blocks that vary a little."
-        case .recommend:
-            return ""
-        }
-    }
 
     static func workout(for request: WorkoutRequest, history: [HistoryEntry]) async throws -> Workout {
         let base = TemplateCoach.baseSpeed(history: history)
-        let recent = history.suffix(5).map { entry in
-            let effort = entry.effort.map { ", effort \($0)/10" } ?? ""
-            let done = entry.completed ? "completed" : "stopped early"
-            let changes = (entry.deviations ?? []).isEmpty ? "" : "; " + Deviation.summary(entry.deviations ?? [])
-            return "- \(entry.name): \(entry.seconds / 60) min, top speed \(String(format: "%.1f", entry.maxMph)) mph, \(done)\(effort)\(changes)"
-        }
-        var prompt = """
-            Create a \(request.minutes)-minute \(request.intensity.rawValue.lowercased()) \(request.kind.rawValue.lowercased()) treadmill workout.
-            Total time: exactly \(request.minutes * 60) seconds.
-            The person's comfortable walking speed is about \(String(format: "%.1f", base)) mph.
-            """
-        prompt += "\n" + typeGuide(request.kind, base: base)
-        prompt += recent.isEmpty
-            ? "\nNo previous workouts yet, so keep it approachable."
-            : "\nRecent workouts:\n" + recent.joined(separator: "\n")
-        let notes = request.notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !notes.isEmpty {
-            prompt += "\nThe person adds: \(notes)"
-        }
-
+        let prompt = WorkoutPrompt.request(request, base: base, history: history)
+        let instructions = WorkoutPrompt.rules
         if !loggedInstructions {
             loggedInstructions = true
             dlog("Coach instructions (fixed text sent with every request):\n" + instructions)

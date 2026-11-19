@@ -80,7 +80,7 @@ struct CreateWorkoutView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "sparkles")
                                 .symbolEffect(.pulse, isActive: coach.isWorking)
-                            Text(coach.isWorking ? "Creating…" : "Create \(request.minutes)-min workout")
+                            Text(coach.isWorking ? (coach.progress.isEmpty ? "Creating…" : coach.progress) : "Create \(request.minutes)-min workout")
                         }
                     }
                     .buttonStyle(SportButtonStyle(kind: .go))
