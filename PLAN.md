@@ -457,3 +457,13 @@ None. The plan is ready for milestone 0.
 
 ### Principle (user, 2026-11-19)
 The app adapts to the user's physiology, with full flexibility. Code computes and enforces (zones, the personal heart-rate model, safety limits, every check); the AI interprets the user's words and notes, proposes plans from the computed numbers and explains them, and its answers are always checked against the model and the limits. Every adaptive feature has a mode (Off, Suggest, Auto) and the user can override it with the tiles and STOP at any time. The app gives training guidance, not medical advice.
+
+### Calibration test, draft protocol (fix 45; user liked it, 2026-11-19)
+- **Needs:** the armband on and connected, the safety key clipped, age entered (fix 43). It runs as a built-in workout through the normal runner, so it has the same safety rules, tiles, STOP, Live Activity and recovery as any workout; it is saved in History marked as a calibration.
+- **Before:** 60 s standing still to record the resting heart rate.
+- **Stages (walking only, 0% incline):** 3 min warm-up, then 6 stages of 3 min at the comfortable speed (c) minus 0.8, minus 0.4, c, plus 0.4, plus 0.8, plus 1.2 (for c = 3.0: 2.2, 2.6, 3.0, 3.4, 3.8, 4.2 mph), then 3 min cool-down; about 24 min. Optional second part: 4 stages of 3 min at c with 0, 2, 4 and 6% incline (about 12 min more).
+- **Settled heart rate of a stage:** the mean of its last 60 s; if the last two 30 s halves differ by more than 3 bpm the stage is extended by 30 s (once).
+- **Model:** least squares of settled heart rate against speed (and incline); a fit with R squared under 0.9 is reported as noisy and the test is offered again; the model gives speed (or incline) for a target heart rate by inverting it.
+- **Maximum heart rate:** from age (208 - 0.7 x age) unless the user types a measured one: a submaximal test cannot measure it. Zones by heart-rate reserve (resting and maximum), shown as heart rate and as speed and incline for this person.
+- **Stops:** the heart rate over 92% of the estimated maximum, no signal for 10 s (pauses), or the user ends it; the cool-down always follows.
+- **Saved:** a small JSON (model, date, resting rate, maximum, settled values) in the data folder; repeat every few weeks; history of fits gives the fitness trend (fix 47).
