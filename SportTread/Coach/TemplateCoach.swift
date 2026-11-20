@@ -4,10 +4,16 @@ import Foundation
 /// type and a comfortable base speed from recent history.
 enum TemplateCoach {
     /// Comfortable steady walking speed from recent workouts, nudged by the last effort rating.
-    static func baseSpeed(history: [HistoryEntry], heightInches: Double? = nil) -> Double {
+    /// With the person's own easy and fast walk, the comfortable speed is the middle of the two (effort ratings
+    /// still nudge it). Fitness tests are not workouts: their top speed says nothing about the comfortable pace.
+    static func baseSpeed(history allHistory: [HistoryEntry], heightInches: Double? = nil,
+                          personal: (easy: Double, fast: Double)? = nil) -> Double {
+        let history = allHistory.filter { $0.name != CalibrationPlan.workoutName }
         let recent = history.suffix(5)
         var base = BodyProfile.startingSpeed(heightInches: heightInches)
-        if !recent.isEmpty {
+        if let personal {
+            base = (personal.easy + personal.fast) / 2
+        } else if !recent.isEmpty {
             // Steady pace is roughly 85% of the top speed reached in recent workouts
             let averageTop = recent.map(\.maxMph).reduce(0, +) / Double(recent.count)
             base = min(max(averageTop * 0.85, 2.5), 4.5)
@@ -68,7 +74,8 @@ enum TemplateCoach {
         }
     }
 
-    static func make(_ request: WorkoutRequest, history: [HistoryEntry], heightInches: Double? = nil) -> Workout {
+    static func make(_ request: WorkoutRequest, history: [HistoryEntry], heightInches: Double? = nil,
+                     personal: (easy: Double, fast: Double)? = nil, limits: SpeedLimits = .standard) -> Workout {
         let kind = request.kind == .recommend ? recommendedKind(history: history) : request.kind
         let total = max(10, request.minutes) * 60
         let warm = request.minutes >= 20 ? 240 : 180
@@ -79,7 +86,7 @@ enum TemplateCoach {
         case .moderate: 1
         case .hard: 2
         }
-        let base = baseSpeed(history: history, heightInches: heightInches) + (level - 1) * 0.3
+        let base = baseSpeed(history: history, heightInches: heightInches, personal: personal) + (level - 1) * 0.3
 
         // Warm-up and cool-down ramp over two steps each, instead of one flat step
         let warmLow = max(base - 1.0, 1.5)
@@ -100,7 +107,7 @@ enum TemplateCoach {
             steps += blocks(label: "Steady", seconds: main, base: base, speeds: speeds,
                             inclines: inclinePattern(eff, request.intensity))
         case .jog:
-            let jog = min(base + 1.5 + level * 0.2, 6.2)
+            let jog = min(max(base + 1.5 + level * 0.2, limits.jogLow + 0.2), min(limits.jogHigh, 6.2))
             let jogInclines: [Double] = eff == .none ? [0] : (eff == .some ? [0, 2, 1, 2] : [1, 4, 2, 1])
             steps += blocks(label: "Jog", seconds: main, base: jog, speeds: [0, 0.3, -0.3, 0.2], inclines: jogInclines)
         case .intervals:
@@ -390,7 +397,7 @@ enum SafetyCheck {
     /// Intervals needs at least 4 swings of 0.5 mph or more between neighbouring main steps, Hills an
     /// incline range of 2% or more, Jog a main speed of 3.8 mph or more. Walk accepts anything.
     static func matchesKind(_ steps: [WorkoutStep], kind: WorkoutRequest.Kind, minutes: Int,
-                            effort: WorkoutRequest.EffortFrom = .mix) -> Bool {
+                            effort: WorkoutRequest.EffortFrom = .mix, jogLow: Double = 4.0) -> Bool {
         guard minutes >= 20 else { return true }
         let main = mainSteps(steps)
         guard !main.isEmpty else { return false }
@@ -404,7 +411,7 @@ enum SafetyCheck {
             let inclines = main.map(\.incline)
             return (inclines.max() ?? 0) - (inclines.min() ?? 0) >= 1.99
         case .jog:
-            return (main.map(\.mph).max() ?? 0) >= 3.8
+            return (main.map(\.mph).max() ?? 0) >= jogLow - 0.2
         case .walk, .recommend:
             return true
         }

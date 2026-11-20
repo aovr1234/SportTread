@@ -9,9 +9,12 @@ struct CalibrationView: View {
     @State private var withIncline = false
     @State private var restingLeft: Int?
     @State private var task: Task<Void, Never>?
+    @State private var refresh = 0
 
     private var profile: BodyProfile { BodyProfile.stored }
-    private var comfortable: Double { TemplateCoach.baseSpeed(history: library.history, heightInches: profile.heightInches) }
+    private var comfortable: Double {
+        TemplateCoach.baseSpeed(history: library.history, heightInches: profile.heightInches, personal: profile.personalSpeeds)
+    }
     private var ready: Bool { heart.signal && treadmill.isReady && profile.age != nil && !runner.isActive }
 
     var body: some View {
@@ -34,7 +37,8 @@ struct CalibrationView: View {
 
             Section {
                 Toggle("Add the incline part (about 9 more minutes)", isOn: $withIncline)
-                let stages = CalibrationPlan.levels(comfortable: comfortable, withIncline: withIncline)
+                let stages = CalibrationPlan.levels(comfortable: comfortable, withIncline: withIncline,
+                                                    easy: profile.easyWalkMph, jogStart: profile.jogStartMph)
                 Text("Stages: " + stages.map { $0.incline > 0 ? String(format: "%.1f mph at %g%%", $0.mph, $0.incline) : String(format: "%.1f", $0.mph) }.joined(separator: ", ") + " mph")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -71,6 +75,15 @@ struct CalibrationView: View {
                         .listRowInsets(EdgeInsets())
                 }
                 .listRowBackground(Color.clear)
+                Section {
+                    Button("Forget the saved test result", role: .destructive) {
+                        FitnessModel.forget()
+                        refresh += 1
+                    }
+                } footer: {
+                    Text("Clears the saved result and the resting heart rate it set. Your zones go back to the maximum heart rate only, or to the resting rate you typed or Apple Health has.")
+                }
+                .listRowBackground(glassRow)
             }
         }
         .sportList()
@@ -98,8 +111,9 @@ struct CalibrationView: View {
                 }
             }
             restingLeft = nil
-            let resting = readings.sorted().isEmpty ? nil : readings.sorted()[readings.count / 2]
-            runner.startCalibration(comfortable: comfortable, withIncline: withIncline, restingBpm: resting)
+            let resting = RestingHeartRate.estimate(readings: readings)
+            runner.startCalibration(comfortable: comfortable, withIncline: withIncline, restingBpm: resting,
+                                    easy: profile.easyWalkMph, jogStart: profile.jogStartMph)
         }
     }
 }
@@ -142,7 +156,7 @@ struct CalibrationResultCard: View {
 
     private var summaryLine: String {
         var parts: [String] = []
-        if let resting = model.restingBpm { parts.append("resting \(resting) bpm") }
+        if let resting = model.restingBpm { parts.append("resting \(resting) bpm" + (model.restingSource.map { " (\($0))" } ?? "")) }
         if let max = model.maxBpm { parts.append("maximum \(max) bpm") }
         parts.append(String(format: "about %.0f bpm per mph", model.perMph))
         if model.perIncline > 0.5 { parts.append(String(format: "%.1f bpm per 1%% incline", model.perIncline)) }
@@ -155,7 +169,9 @@ struct CalibrationResultCard: View {
         let lo = max(low, 0.5)
         let hi = max(high, 0.5)
         if hi > 10 { return String(format: "%.1f+ mph", lo) }
-        return String(format: "%.1f–%.1f mph", lo, hi)
+        let jog = BodyProfile.stored.jogStartMph ?? 4.0
+        let gait = hi <= jog ? "walk" : (lo >= jog ? "jog" : "walk to jog")
+        return String(format: "%.1f–%.1f mph, %@", lo, hi, gait)
     }
 }
 

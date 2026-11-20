@@ -38,6 +38,24 @@ final class DiagnosticsLog: NSObject, ObservableObject, MXMetricManagerSubscribe
     func start(launch: String) {
         add("=== App launched (\(launch)) ===")
         MXMetricManager.shared.add(self)
+        // Memory use every 5 minutes (iOS closed the app once for memory pressure; this shows what it was using)
+        Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { _ in
+            if let mb = DiagnosticsLog.memoryMB() { DiagnosticsLog.shared.add(String(format: "Memory: %.0f MB", mb)) }
+        }
+        if let mb = DiagnosticsLog.memoryMB() { add(String(format: "Memory: %.0f MB at launch", mb)) }
+    }
+
+    /// The app's memory footprint in MB, as iOS counts it.
+    static func memoryMB() -> Double? {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { raw in
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), raw, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        return Double(info.phys_footprint) / 1_048_576
     }
 
     func add(_ text: String) {

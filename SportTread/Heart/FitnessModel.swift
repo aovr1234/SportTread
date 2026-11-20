@@ -11,6 +11,8 @@ enum CalibrationPlan {
         var seconds: Int
     }
 
+    /// The history name of a test (left out of the comfortable-speed calculation and the coach's recent workouts)
+    static let workoutName = "Fitness test"
     static let warmSeconds = 180
     static let stageSeconds = 180
     static let coolSeconds = 180
@@ -19,17 +21,28 @@ enum CalibrationPlan {
 
     /// Speeds around the comfortable speed `c`: -0.8, -0.4, 0, +0.4, +0.8, +1.2 mph, kept to walking speeds
     /// (1.5 to 4.5 mph); optionally the comfortable speed at 2, 4 and 6 percent incline.
-    static func levels(comfortable c: Double, withIncline: Bool) -> [(mph: Double, incline: Double)] {
+    /// With the person's own easy walk and jog speed, the six stages are spread evenly from a little below the easy
+    /// walk to a little below the speed where jogging starts, so walking stays walking.
+    static func levels(comfortable c: Double, withIncline: Bool, easy: Double? = nil, jogStart: Double? = nil)
+        -> [(mph: Double, incline: Double)] {
         func walk(_ mph: Double) -> Double { (min(max(mph, 1.5), 4.5) * 10).rounded() / 10 }
-        var result: [(mph: Double, incline: Double)] = [-0.8, -0.4, 0, 0.4, 0.8, 1.2].map { (walk(c + $0), 0.0) }
+        var result: [(mph: Double, incline: Double)]
+        if let easy, let jogStart {
+            let low = max(1.5, easy - 0.2)
+            let high = min(4.5, max(jogStart - 0.2, low + 1.0))
+            result = (0..<6).map { (walk(low + (high - low) * Double($0) / 5), 0.0) }
+        } else {
+            result = [-0.8, -0.4, 0, 0.4, 0.8, 1.2].map { (walk(c + $0), 0.0) }
+        }
         if withIncline {
             for incline in [2.0, 4.0, 6.0] { result.append((walk(c), incline)) }
         }
         return result
     }
 
-    static func workout(comfortable c: Double, withIncline: Bool) -> (workout: Workout, stages: [Stage]) {
-        let levels = levels(comfortable: c, withIncline: withIncline)
+    static func workout(comfortable c: Double, withIncline: Bool, easy: Double? = nil, jogStart: Double? = nil)
+        -> (workout: Workout, stages: [Stage]) {
+        let levels = levels(comfortable: c, withIncline: withIncline, easy: easy, jogStart: jogStart)
         var steps = [WorkoutStep(label: "Warm-up", seconds: warmSeconds, mph: levels[0].mph, incline: 0)]
         var stages: [Stage] = []
         var clock = warmSeconds
@@ -42,12 +55,34 @@ enum CalibrationPlan {
             clock += stageSeconds
         }
         steps.append(WorkoutStep(label: "Cool-down", seconds: coolSeconds, mph: max(1.5, ((c - 1.2) * 10).rounded() / 10), incline: 0))
-        return (Workout(name: "Fitness test", summary: "Stages of rising speed to learn how your heart responds", steps: steps), stages)
+        return (Workout(name: workoutName, summary: "Stages of rising speed to learn how your heart responds", steps: steps), stages)
     }
 
     /// True when the heart rate is high enough that the test should skip to the cool-down.
     static func shouldStop(bpm: Int, maxBpm: Int) -> Bool {
         Double(bpm) >= Double(maxBpm) * stopShare
+    }
+}
+
+/// Decides when a heart rate is high enough to stop the test: over the line for 3 seconds in a row, or 8 seconds
+/// when it jumped more than 25 bpm in the last 10 seconds (probably the armband slipping). Readings of 0 are ignored.
+struct StopGuard {
+    private var window: [(at: Date, bpm: Int)] = []
+    private var aboveSince: Date?
+
+    mutating func update(bpm: Int, at time: Date, maxBpm: Int) -> Bool {
+        guard bpm > 0 else { return false }
+        window.append((time, bpm))
+        window.removeAll { time.timeIntervalSince($0.at) > 10 }
+        guard Double(bpm) >= Double(maxBpm) * CalibrationPlan.stopShare else {
+            aboveSince = nil
+            return false
+        }
+        let since = aboveSince ?? time
+        aboveSince = since
+        let lowest = window.map { $0.bpm }.min() ?? bpm
+        let needed: TimeInterval = bpm - lowest > 25 ? 8 : 3
+        return time.timeIntervalSince(since) >= needed
     }
 }
 
@@ -71,6 +106,8 @@ struct FitnessModel: Codable, Equatable {
     var points: [Point]
     /// Stages that were still rising when their last minute was measured (their numbers are a little low)
     var unsettled: [Int] = []
+    /// Where the resting heart rate came from ("Apple Health", "measured standing")
+    var restingSource: String?
 
     var isNoisy: Bool { r2 < 0.9 }
 
@@ -140,35 +177,70 @@ struct FitnessModel: Codable, Equatable {
 
     static var latest: FitnessModel? { history.last }
 
+    /// Saves a test result. Only a good fit is kept, and only a good fit sets the resting heart rate the zones use.
     static func save(_ model: FitnessModel) {
+        guard !model.isNoisy else { return }
         let models = Array((history + [model]).suffix(12))
         if let data = try? JSONEncoder().encode(models) { UserDefaults.standard.set(data, forKey: storeKey) }
         if let resting = model.restingBpm { UserDefaults.standard.set(resting, forKey: BodyProfile.restingKey) }
     }
+
+    /// Clears the saved results and the resting heart rate they set.
+    static func forget() {
+        UserDefaults.standard.removeObject(forKey: storeKey)
+        UserDefaults.standard.removeObject(forKey: BodyProfile.restingKey)
+    }
 }
 
 enum CalibrationAnalysis {
-    /// The settled heart rate of each stage that was completed: the mean of its last minute. A stage whose second
+    /// When a stage really started and ended, on the workout clock (a skip to the cool-down or a pause moves them).
+    struct Window: Equatable {
+        var index: Int
+        var mph: Double
+        var incline: Double
+        var start: Int
+        var end: Int
+    }
+
+    /// The settled heart rate of each stage: the mean of its last minute. A stage shorter than 90 s is left out; a
+    /// stage that was mostly jogging is left out of the walking line and listed in `jogStages`; a stage whose second
     /// half of that minute is more than 3 bpm above the first is listed as unsettled (its number is a little low).
-    /// Stages with fewer than 6 heart-rate samples in that minute are skipped.
-    static func points(samples: [SessionSample], stages: [CalibrationPlan.Stage], elapsed: Int)
-        -> (points: [FitnessModel.Point], unsettled: [Int]) {
+    /// A stage with fewer than 6 heart-rate samples in that minute is skipped.
+    static func points(samples: [SessionSample], windows: [Window])
+        -> (points: [FitnessModel.Point], unsettled: [Int], jogStages: [Int]) {
         var points: [FitnessModel.Point] = []
         var unsettled: [Int] = []
-        for (index, stage) in stages.enumerated() {
-            let end = stage.startSecond + stage.seconds
-            guard elapsed >= end - 5 else { continue }
-            let window = samples.filter { $0.t >= end - 60 && $0.t < end }.compactMap { sample in sample.bpm.map { (sample.t, Double($0)) } }
-            guard window.count >= 6 else { continue }
-            let mean = window.reduce(0) { $0 + $1.1 } / Double(window.count)
-            points.append(FitnessModel.Point(mph: stage.mph, incline: stage.incline, bpm: mean))
-            let first = window.filter { $0.0 < end - 30 }.map { $0.1 }
-            let second = window.filter { $0.0 >= end - 30 }.map { $0.1 }
+        var jogStages: [Int] = []
+        for window in windows {
+            guard window.end - window.start >= 90 else { continue }
+            let inStage = samples.filter { $0.t >= window.start && $0.t < window.end }
+            if !inStage.isEmpty, Double(inStage.filter { $0.jog == true }.count) / Double(inStage.count) >= 0.4 {
+                jogStages.append(window.index)
+                continue
+            }
+            let lastMinute = inStage.filter { $0.t >= window.end - 60 }.compactMap { sample in sample.bpm.map { (sample.t, Double($0)) } }
+            guard lastMinute.count >= 6 else { continue }
+            let mean = lastMinute.reduce(0) { $0 + $1.1 } / Double(lastMinute.count)
+            points.append(FitnessModel.Point(mph: window.mph, incline: window.incline, bpm: mean))
+            let first = lastMinute.filter { $0.0 < window.end - 30 }.map { $0.1 }
+            let second = lastMinute.filter { $0.0 >= window.end - 30 }.map { $0.1 }
             if !first.isEmpty, !second.isEmpty {
                 let rise = second.reduce(0, +) / Double(second.count) - first.reduce(0, +) / Double(first.count)
-                if rise > 3 { unsettled.append(index + 1) }
+                if rise > 3 { unsettled.append(window.index) }
             }
         }
-        return (points, unsettled)
+        return (points, unsettled, jogStages)
+    }
+
+    /// The same on the planned schedule: the stages that were finished by `elapsed`.
+    static func points(samples: [SessionSample], stages: [CalibrationPlan.Stage], elapsed: Int)
+        -> (points: [FitnessModel.Point], unsettled: [Int]) {
+        var windows: [Window] = []
+        for (index, stage) in stages.enumerated() where elapsed >= stage.startSecond + stage.seconds - 5 {
+            windows.append(Window(index: index + 1, mph: stage.mph, incline: stage.incline,
+                                  start: stage.startSecond, end: stage.startSecond + stage.seconds))
+        }
+        let result = points(samples: samples, windows: windows)
+        return (result.points, result.unsettled)
     }
 }

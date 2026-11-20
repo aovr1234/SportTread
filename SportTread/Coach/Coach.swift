@@ -40,7 +40,8 @@ final class Coach: ObservableObject {
         if let readinessNote {
             resolved.notes += (resolved.notes.isEmpty ? "" : " ") + readinessNote + "."
         }
-        let comfortable = TemplateCoach.baseSpeed(history: history, heightInches: BodyProfile.stored.heightInches)
+        let profile = BodyProfile.stored
+        let comfortable = TemplateCoach.baseSpeed(history: history, heightInches: profile.heightInches, personal: profile.personalSpeeds)
 
         // 1. Cloud AI, when it is on: each enabled service in turn, with up to two fix-ups each
         if let made = await createWithCloud(request: request, resolved: resolved, history: history, comfortable: comfortable) {
@@ -68,13 +69,13 @@ final class Coach: ObservableObject {
                 note = "Apple Intelligence couldn't create it (\(error.localizedDescription)), so the built-in rules made this one."
                 dlog("Coach: Apple Intelligence failed: \(error.localizedDescription); using the rules")
             }
-            return Self.logged(Self.exact(TemplateCoach.make(resolved, history: history, heightInches: BodyProfile.stored.heightInches), minutes: resolved.minutes))
+            return Self.logged(Self.exact(TemplateCoach.make(resolved, history: history, heightInches: profile.heightInches, personal: profile.personalSpeeds, limits: profile.speedLimits), minutes: resolved.minutes))
         }
         #endif
 
         // 3. The built-in rules
         note = "Made with the built-in rules (Apple Intelligence: \(Self.appleIntelligenceStatus))."
-        return Self.logged(Self.exact(TemplateCoach.make(resolved, history: history, heightInches: BodyProfile.stored.heightInches), minutes: resolved.minutes))
+        return Self.logged(Self.exact(TemplateCoach.make(resolved, history: history, heightInches: profile.heightInches, personal: profile.personalSpeeds, limits: profile.speedLimits), minutes: resolved.minutes))
     }
 
     /// Repairs an AI workout and decides whether it is good enough: the reason it was rejected, or nil.
@@ -85,7 +86,8 @@ final class Coach: ObservableObject {
             rejected = "it didn't pass the safety check"
         } else if resolved.minutes >= 20, SafetyCheck.isFlat(safe.steps) {
             rejected = "it was one flat pace"
-        } else if !SafetyCheck.matchesKind(safe.steps, kind: resolved.kind, minutes: resolved.minutes, effort: resolved.effectiveEffort) {
+        } else if !SafetyCheck.matchesKind(safe.steps, kind: resolved.kind, minutes: resolved.minutes, effort: resolved.effectiveEffort,
+                                         jogLow: BodyProfile.stored.speedLimits.jogLow) {
             rejected = "it didn't look like \(resolved.kind.rawValue.lowercased())"
         } else if resolved.kind == .intervals, resolved.minutes >= 20,
                   !SafetyCheck.lengthIsClose(made.totalSeconds, to: resolved.minutes * 60) {
@@ -118,7 +120,7 @@ final class Coach: ObservableObject {
         let shared = settings.sendHistory ? history : []
         if !settings.sendHistory { asked.notes = request.notes }
         let system = WorkoutPrompt.cloudInstructions(for: asked.kind)
-        let prompt = WorkoutPrompt.request(asked, base: comfortable, history: shared)
+        let prompt = WorkoutPrompt.request(asked, base: comfortable, history: shared, limits: BodyProfile.stored.speedLimits)
         dlog("Coach: cloud AI is on, trying " + providers.map(\.name).joined(separator: ", ")
              + (settings.sendHistory ? "" : " (recent workouts and readiness not sent)"))
         dlog("Coach cloud prompt:\n" + prompt)
@@ -242,8 +244,9 @@ enum AppleIntelligence {
     private static var loggedInstructions = false
 
     static func workout(for request: WorkoutRequest, history: [HistoryEntry]) async throws -> Workout {
-        let base = TemplateCoach.baseSpeed(history: history, heightInches: BodyProfile.stored.heightInches)
-        let prompt = WorkoutPrompt.request(request, base: base, history: history)
+        let profile = BodyProfile.stored
+        let base = TemplateCoach.baseSpeed(history: history, heightInches: profile.heightInches, personal: profile.personalSpeeds)
+        let prompt = WorkoutPrompt.request(request, base: base, history: history, limits: profile.speedLimits)
         let instructions = WorkoutPrompt.rules
         if !loggedInstructions {
             loggedInstructions = true

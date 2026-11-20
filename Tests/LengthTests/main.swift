@@ -627,6 +627,96 @@ check(FitnessModel.fit(points: falling, restingBpm: nil, maxBpm: nil, date: Date
 let scattered = zip(speedOnly, [118.0, 95.0, 130.0, 88.0, 125.0, 99.0]).map { FitnessModel.Point(mph: $0.0.mph, incline: 0, bpm: $0.1) }
 check(FitnessModel.fit(points: scattered, restingBpm: nil, maxBpm: nil, date: Date())?.isNoisy ?? true, "scattered readings must be reported as noisy")
 
+// Fixes 49-53: real stage windows, resting heart rate, stop guard, your own speeds, tests that must not distort the profile
+let restWarm = RestingHeartRate.estimate(readings: Array(repeating: 110, count: 5) + Array(repeating: 80, count: 20))
+check(restWarm == 80, "resting estimate should skip the settling start and give 80, got \(String(describing: restWarm))")
+check(RestingHeartRate.estimate(readings: Array(repeating: 70, count: 14)) == nil, "fewer than 15 readings can't give a resting rate")
+check(RestingHeartRate.estimate(readings: Array(repeating: 0, count: 10) + Array(repeating: 66, count: 15)) == 66, "zero readings must be ignored")
+check(RestingHeartRate.choose(measured: 104, health: 62)?.bpm == 62 && RestingHeartRate.choose(measured: 104, health: 62)?.source == "Apple Health", "a standing 104 against a Health 62 should use Health")
+check(RestingHeartRate.choose(measured: 70, health: 62)?.bpm == 70, "a standing 70 against Health 62 is believable")
+check(RestingHeartRate.choose(measured: nil, health: 62)?.bpm == 62 && RestingHeartRate.choose(measured: 70, health: nil)?.bpm == 70 && RestingHeartRate.choose(measured: nil, health: nil) == nil, "resting sources")
+
+var guardA = StopGuard()
+let guardStart = Date(timeIntervalSince1970: 5_000_000)
+var steadyHits: [Int] = []
+for second in 1...12 {
+    let at = guardStart.addingTimeInterval(Double(second))
+    if guardA.update(bpm: second <= 5 ? 160 : 168, at: at, maxBpm: 180) { steadyHits.append(second) }
+}
+check(steadyHits.first == 9, "a steady rise over the line (165.6) from second 6 should stop at second 9 (3 s), got \(steadyHits)")
+var guardB = StopGuard()
+var jumpHits: [Int] = []
+for second in 1...30 {
+    let at = guardStart.addingTimeInterval(Double(second))
+    if guardB.update(bpm: second <= 10 ? 140 : 176, at: at, maxBpm: 189) { jumpHits.append(second) }
+}
+check(jumpHits.first == 19, "a jump of 36 bpm needs 8 s above the line before it stops: expected second 19, got \(jumpHits.first.map(String.init) ?? "none")")
+var guardC = StopGuard()
+check(!guardC.update(bpm: 0, at: guardStart, maxBpm: 180) && !guardC.update(bpm: 200, at: guardStart.addingTimeInterval(1), maxBpm: 180), "a zero reading is ignored and one high reading alone doesn't stop the test")
+
+var mine = BodyProfile()
+check(mine.personalSpeeds == nil && mine.speedLimits == .standard, "no personal speeds by default")
+mine.easyWalkMph = 2.4
+mine.fastWalkMph = 3.0
+mine.jogStartMph = 3.6
+check(mine.personalSpeeds?.easy == 2.4 && mine.personalSpeeds?.fast == 3.0, "personal speeds")
+check(abs(mine.speedLimits.walkLow - 2.1) < 1e-9 && abs(mine.speedLimits.walkHigh - 3.4) < 1e-9 && mine.speedLimits.jogLow == 3.6 && abs(mine.speedLimits.jogHigh - 5.6) < 1e-9, "limits from 2.4 / 3.6")
+check(TemplateCoach.baseSpeed(history: [], personal: (2.4, 3.0)) == 2.7, "comfortable speed is the middle of easy and fast walk")
+let testOnly = [HistoryEntry(date: Date(), name: CalibrationPlan.workoutName, plannedSeconds: 1440, seconds: 1100, miles: 0.8, maxMph: 3.8, maxIncline: 0, completed: true, effort: 9)]
+check(TemplateCoach.baseSpeed(history: testOnly) == 3.0, "a fitness test must not change the comfortable speed")
+check(!WorkoutPrompt.request(WorkoutRequest(), base: 3.0, history: testOnly).contains("Fitness test"), "a fitness test must not appear in the coach's recent workouts")
+let personalLimits = mine.speedLimits
+check(WorkoutPrompt.typeGuide(.walk, base: 2.7, intensity: .moderate, limits: personalLimits).contains("2.1 to 3.4 mph"), "walk guide from personal limits")
+check(WorkoutPrompt.typeGuide(.jog, base: 2.7, intensity: .moderate, limits: personalLimits).contains("3.6 to 5.6 mph"), "jog guide from personal limits")
+check(WorkoutPrompt.request(WorkoutRequest(), base: 2.7, history: [], limits: personalLimits).contains("starts jogging at about 3.6 mph"), "the request should say where jogging starts")
+check(!WorkoutPrompt.request(WorkoutRequest(), base: 3.0, history: []).contains("starts jogging"), "no jog line with the standard limits")
+for minutes in [30, 45, 60] {
+    for intensity in WorkoutRequest.Intensity.allCases {
+        var walkRequest = WorkoutRequest()
+        walkRequest.minutes = minutes
+        walkRequest.kind = .walk
+        walkRequest.intensity = intensity
+        let walkWorkout = TemplateCoach.make(walkRequest, history: [], personal: (2.4, 3.0), limits: personalLimits)
+        check(walkWorkout.steps.allSatisfy { $0.mph <= 3.4 + 0.001 }, "a walk for the 2.4 / 3.0 / 3.6 person goes up to \(walkWorkout.maxMph) mph (\(intensity.rawValue), \(minutes) min)")
+        var jogRequest = walkRequest
+        jogRequest.kind = .jog
+        let jogWorkout = TemplateCoach.make(jogRequest, history: [], personal: (2.4, 3.0), limits: personalLimits)
+        check(SafetyCheck.matchesKind(jogWorkout.steps, kind: .jog, minutes: minutes, jogLow: 3.6), "a jog for the 2.4 / 3.0 / 3.6 person doesn't reach its own jog speed")
+    }
+}
+let personalPlan = CalibrationPlan.workout(comfortable: 2.7, withIncline: false, easy: 2.4, jogStart: 3.6)
+check(personalPlan.stages.map(\.mph) == [2.2, 2.4, 2.7, 2.9, 3.2, 3.4], "personal test stages \(personalPlan.stages.map(\.mph))")
+check(personalPlan.workout.problems.isEmpty && SafetyCheck.clamped(personalPlan.workout.steps) == personalPlan.workout.steps, "the personal test plan is changed by the safety clamp or has problems")
+let tightPlan = CalibrationPlan.workout(comfortable: 2.4, withIncline: true, easy: 2.0, jogStart: 2.8)
+check(tightPlan.workout.problems.isEmpty && Set(tightPlan.stages.map(\.mph)).count >= 4, "a narrow speed range still gives several stages")
+
+// Real stage windows: a stage cut short is dropped, a jogged stage goes to the jog list (fix 49)
+var windowSamples = fakeSamples(stages: calPlanIncline.stages)
+for index in windowSamples.indices where windowSamples[index].t >= 540 && windowSamples[index].t < 720 { windowSamples[index].jog = true }
+let windowResult = CalibrationAnalysis.points(samples: windowSamples, windows: [
+    CalibrationAnalysis.Window(index: 1, mph: 2.2, incline: 0, start: 180, end: 360),
+    CalibrationAnalysis.Window(index: 2, mph: 2.6, incline: 0, start: 360, end: 411),
+    CalibrationAnalysis.Window(index: 3, mph: 3.0, incline: 0, start: 540, end: 720),
+])
+check(windowResult.points.count == 1 && windowResult.points[0].mph == 2.2, "windows: only the full walking stage should count, got \(windowResult.points.count)")
+check(windowResult.jogStages == [3], "the jogged stage should be listed, got \(windowResult.jogStages)")
+var jogLog = SampleLog()
+jogLog.add(elapsed: 0, mph: 3.8, incline: 0, bpm: 150, jog: true)
+jogLog.add(elapsed: 5, mph: 3.8, incline: 0, bpm: 150)
+check(jogLog.samples[0].jog == true && jogLog.samples[1].jog == nil, "the jog flag is kept only when set")
+
+// A noisy result is not saved, a good one sets the resting rate, forgetting clears it (fix 53)
+FitnessModel.forget()
+let noisyModel = FitnessModel(date: Date(), restingBpm: 80, maxBpm: 180, base: 50, perMph: 20, perIncline: 0, r2: 0.5, points: [])
+FitnessModel.save(noisyModel)
+check(FitnessModel.latest == nil && UserDefaults.standard.integer(forKey: BodyProfile.restingKey) == 0, "a noisy result must not be saved")
+var goodModel = noisyModel
+goodModel.r2 = 0.95
+FitnessModel.save(goodModel)
+check(FitnessModel.latest != nil && UserDefaults.standard.integer(forKey: BodyProfile.restingKey) == 80, "a good result is saved with its resting rate")
+FitnessModel.forget()
+check(FitnessModel.latest == nil && UserDefaults.standard.integer(forKey: BodyProfile.restingKey) == 0, "forgetting clears the result and the resting rate")
+
 // 6. Treadmill command rules (CommandPacer): replayed second by second, no Bluetooth
 let t0 = Date(timeIntervalSince1970: 1_000_000)
 func at(_ seconds: Double) -> Date { t0.addingTimeInterval(seconds) }

@@ -80,6 +80,15 @@ struct WorkoutLiveView: View {
                 .lineLimit(2)
                 .minimumScaleFactor(0.8)
             Spacer(minLength: 0)
+            if runner.phase == .running {
+                Button { runner.toggleJogging() } label: {
+                    Label(runner.jogging ? "Jogging" : "Walking", systemImage: runner.jogging ? "figure.run" : "figure.walk")
+                        .font(.footnote.weight(.bold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(runner.jogging ? Theme.cyan : Color.secondary)
+                .accessibilityLabel(runner.jogging ? "Jogging. Tap to say you are walking" : "Walking. Tap to say you are jogging")
+            }
             HeartChip()
             if runner.isActive && !treadmill.isReady {
                 if [.scanning, .connecting, .handshaking, .reconnecting].contains(treadmill.state) {

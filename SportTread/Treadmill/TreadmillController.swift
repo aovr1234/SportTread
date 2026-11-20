@@ -1,5 +1,6 @@
 import CoreBluetooth
 import Foundation
+import UIKit
 
 /// Connects to the treadmill, runs the handshake, polls status continuously and sends commands
 /// between poll messages (a 3-frame poll must never be split, or the console rejects and disconnects).
@@ -83,6 +84,14 @@ final class TreadmillController: NSObject, ObservableObject {
     private var pendingWrite: CheckedContinuation<Void, Never>?
     private var pendingWriteID = 0
     private var lastStatusAt: Date?
+    // Polling shared by the loop and by keepAlive(): the next poll frame, when anything was last sent, signal and counters
+    private var pollIndex = 0
+    private var lastSendAt = Date.distantPast
+    private var resumeGrace = Date.distantPast
+    private var lastRSSI: Int?
+    private var lastRSSIRead = Date.distantPast
+    private var pumpCount = 0
+    private var lastPumpLog = Date.distantPast
     // Targets of recent commands, so repeated taps build on the target, not a stale reading
     private var targetMph: (value: Double, at: Date)?
     private var targetIncline: (value: Double, at: Date)?
@@ -353,6 +362,7 @@ final class TreadmillController: NSObject, ObservableObject {
     private func runSession() {
         session?.cancel()
         state = .handshaking
+        pollIndex = 0
         session = Task {
             for frame in TreadmillProtocol.initFrames {
                 if Task.isCancelled { return }
@@ -364,10 +374,14 @@ final class TreadmillController: NSObject, ObservableObject {
             readySince = Date()
             lastEvent = "Connected"
             dlog("Connected, handshake done")
-            var index = 0
+            var lastLoopAt = Date()
             while !Task.isCancelled {
+                // A long gap between two turns of this loop means the app was suspended: don't blame the treadmill for that
+                let turn = Date()
+                if turn.timeIntervalSince(lastLoopAt) > 3 { resumeGrace = turn }
+                lastLoopAt = turn
                 // Watchdog: a link that looks connected but sends nothing gets reset
-                let heardFrom = lastStatusAt ?? readySince ?? Date()
+                let heardFrom = max(lastStatusAt ?? readySince ?? Date(), resumeGrace)
                 if Date().timeIntervalSince(heardFrom) > Self.silenceLimit, let peripheral {
                     dlog("Watchdog: no status for 10 s")
                     reconnect(peripheral, reason: "No data from the treadmill for 10 s. Reconnecting…")
@@ -376,18 +390,47 @@ final class TreadmillController: NSObject, ObservableObject {
                 }
                 // One command per poll message: a command goes out only between two poll messages, and
                 // is followed by a full poll message, so quick taps can never starve the status polling.
-                if index % 3 == 0, let job = takeNextJob(now: Date()) {
+                if pollIndex % 3 == 0, let job = takeNextJob(now: Date()) {
                     lastEvent = job.label
                     dlog("Sent: \(job.label)")
                     for frame in job.frames {
+                        lastSendAt = Date()
                         await write(frame)
                         try? await Task.sleep(for: .milliseconds(200))
                     }
                 }
-                await write(TreadmillProtocol.pollFrames[index % TreadmillProtocol.pollFrames.count])
-                index += 1
+                let frame = TreadmillProtocol.pollFrames[pollIndex % TreadmillProtocol.pollFrames.count]
+                pollIndex += 1
+                lastSendAt = Date()
+                await write(frame)
                 try? await Task.sleep(for: .milliseconds(200))
             }
+        }
+    }
+
+    /// Called on every Bluetooth wake-up: the treadmill's own messages and the heart-rate sensor's readings. While the
+    /// app is suspended the polling loop above doesn't run, and the console drops a link nobody polls, so the polling
+    /// goes on from here (two poll messages per wake-up, in the same order as the loop, never splitting one).
+    func keepAlive() {
+        guard state == .ready, let peripheral, let tx else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastSendAt) > 0.8 else { return }
+        var frames = 0
+        while frames < 6 || pollIndex % 3 != 0 {
+            if pollIndex % 3 == 0, let job = takeNextJob(now: now) {
+                lastEvent = job.label
+                dlog("Sent (from a background wake-up): \(job.label)")
+                for frame in job.frames { peripheral.writeValue(frame, for: tx, type: .withResponse) }
+            }
+            peripheral.writeValue(TreadmillProtocol.pollFrames[pollIndex % TreadmillProtocol.pollFrames.count], for: tx, type: .withResponse)
+            pollIndex += 1
+            frames += 1
+        }
+        lastSendAt = now
+        pumpCount += 1
+        if now.timeIntervalSince(lastPumpLog) > 60 {
+            lastPumpLog = now
+            dlog("Background polling: the link was kept alive \(pumpCount) times so far")
         }
     }
 
@@ -439,6 +482,11 @@ final class TreadmillController: NSObject, ObservableObject {
 
     private func handle(_ data: Data) {
         guard state == .ready else { return }  // handshake replies aren't status frames
+        keepAlive()
+        if Date().timeIntervalSince(lastRSSIRead) > 10, let peripheral {
+            lastRSSIRead = Date()
+            peripheral.readRSSI()
+        }
         if let code = TreadmillProtocol.refusal(from: data) {
             lastEvent = "Treadmill refused a command (status \(String(format: "%02x", code)))"
             dlog(lastEvent)
@@ -553,7 +601,17 @@ extension TreadmillController: CBCentralManagerDelegate, CBPeripheralDelegate {
             if state == .reconnecting {
                 central.connect(peripheral)  // watchdog reset: try again right away
             } else {
-                dlog("Bluetooth connection lost: \(error?.localizedDescription ?? "no error given")")
+                let quiet = lastStatusAt.map { String(format: "%.0f s since the last status", Date().timeIntervalSince($0)) } ?? "no status yet"
+                let appState: String
+                switch UIApplication.shared.applicationState {
+                case .active: appState = "in front"
+                case .inactive: appState = "inactive"
+                case .background: appState = "in the background"
+                @unknown default: appState = "unknown"
+                }
+                dlog("Bluetooth connection lost: \(error?.localizedDescription ?? "no error given") (\(quiet), app \(appState), "
+                     + "signal \(lastRSSI.map { "\($0) dBm" } ?? "unknown"), memory \(DiagnosticsLog.memoryMB().map { String(format: "%.0f MB", $0) } ?? "unknown"), "
+                     + "\(pumpCount) background polls)")
                 reconnect(peripheral, reason: "Connection lost. Reconnecting… (console Stop always works)")
             }
         }
@@ -589,6 +647,10 @@ extension TreadmillController: CBCentralManagerDelegate, CBPeripheralDelegate {
                 runSession()
             }
         }
+    }
+
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didReadRSSI RSSI: NSNumber, error: Error?) {
+        MainActor.assumeIsolated { lastRSSI = RSSI.intValue }
     }
 
     nonisolated func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {

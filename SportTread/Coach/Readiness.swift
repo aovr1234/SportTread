@@ -45,6 +45,7 @@ final class Readiness: ObservableObject {
         let rhr = (try? await samples(.restingHeartRate, since: monthAgo, unit: HKUnit.count().unitDivided(by: .minute()))) ?? []
         let hrv = (try? await samples(.heartRateVariabilitySDNN, since: monthAgo, unit: .secondUnit(with: .milli))) ?? []
         let sleep = (try? await lastNightSleepHours()) ?? nil
+        if let today = rhr.first { UserDefaults.standard.set(Int(today.value.rounded()), forKey: BodyProfile.healthRestingKey) }
 
         var points = 100
         var notes: [String] = []

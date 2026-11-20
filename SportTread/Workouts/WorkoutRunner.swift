@@ -93,7 +93,19 @@ final class WorkoutRunner: ObservableObject {
         var restingBpm: Int?
         var aborted = false
         var noSignalSince: Date?
+        /// When each stage really started and ended on the workout clock
+        var windows: [CalibrationAnalysis.Window] = []
+        var openStage: Int?
+        var openStart = 0
+        var stopGuard = StopGuard()
+        var lastGuardReading: Date?
     }
+
+    /// The person said they are jogging (readings from then on stay out of the walking line)
+    @Published private(set) var jogging = false
+
+    /// What the last live edit set for the steps after it, to check that the plan really has them when they start
+    private var lastEdit: (from: Int, steps: [WorkoutStep])?
 
     private var calibration: CalibrationRun?
     @Published private(set) var calibrationResult: FitnessModel?
@@ -188,6 +200,8 @@ final class WorkoutRunner: ObservableObject {
         calibration = nil
         calibrationResult = nil
         calibrationNote = nil
+        jogging = false
+        lastEdit = nil
         originalSeconds = workout.totalSeconds
         checkInDue = false
         lastCheckInAt = 0
@@ -377,9 +391,9 @@ final class WorkoutRunner: ObservableObject {
     // MARK: Fitness test
 
     /// Starts the fitness test as a workout.
-    func startCalibration(comfortable: Double, withIncline: Bool, restingBpm: Int?) {
+    func startCalibration(comfortable: Double, withIncline: Bool, restingBpm: Int?, easy: Double? = nil, jogStart: Double? = nil) {
         guard treadmill.isReady, !isActive else { return }
-        let plan = CalibrationPlan.workout(comfortable: comfortable, withIncline: withIncline)
+        let plan = CalibrationPlan.workout(comfortable: comfortable, withIncline: withIncline, easy: easy, jogStart: jogStart)
         start(plan.workout)
         guard isActive else { return }
         calibration = CalibrationRun(stages: plan.stages, restingBpm: restingBpm)
@@ -400,7 +414,12 @@ final class WorkoutRunner: ObservableObject {
         let reading = treadmill.heartRateProvider?()
         if let reading, now.timeIntervalSince(reading.at) < 5 {
             test.noSignalSince = nil
-            if !test.aborted, !isInCoolDown, CalibrationPlan.shouldStop(bpm: reading.bpm, maxBpm: maxBpm) {
+            var stop = false
+            if reading.at != test.lastGuardReading {
+                test.lastGuardReading = reading.at
+                stop = test.stopGuard.update(bpm: reading.bpm, at: reading.at, maxBpm: maxBpm)
+            }
+            if !test.aborted, !isInCoolDown, stop {
                 test.aborted = true
                 calibrationNote = "Stopped early: your heart rate reached 92% of your estimated maximum. Cooling down."
                 dlog("Fitness test: heart rate \(reading.bpm) reached 92% of \(maxBpm); skipping to the cool-down")
@@ -426,22 +445,68 @@ final class WorkoutRunner: ObservableObject {
         activity.update(activityState())
     }
 
-    private func finishCalibration(_ test: CalibrationRun) {
+    /// Notes when each stage really starts and ends, so the analysis uses the real windows (a skip to the cool-down or a
+    /// pause moves them).
+    private func trackCalibrationStage() {
+        guard var test = calibration else { return }
+        defer { calibration = test }
+        let stage: Int? = (stepIndex >= 1 && stepIndex <= test.stages.count) ? stepIndex : nil
+        guard stage != test.openStage else { return }
+        if let open = test.openStage, open >= 1, open <= test.stages.count {
+            let spec = test.stages[open - 1]
+            test.windows.append(CalibrationAnalysis.Window(index: open, mph: spec.mph, incline: spec.incline,
+                                                           start: test.openStart, end: Int(totalElapsed)))
+        }
+        test.openStage = stage
+        test.openStart = Int(totalElapsed)
+    }
+
+    func toggleJogging() {
+        guard isActive else { return }
+        jogging.toggle()
+        dlog("Gait: \(jogging ? "jogging" : "walking") at \(String(format: "%.1f", treadmill.speedMph ?? 0)) mph")
+    }
+
+    private func finishCalibration(_ running: CalibrationRun) {
+        var test = running
         calibration = nil
-        let analysis = CalibrationAnalysis.points(samples: sampleLog.samples, stages: test.stages, elapsed: Int(totalElapsed))
+        if let open = test.openStage, open >= 1, open <= test.stages.count {
+            let spec = test.stages[open - 1]
+            test.windows.append(CalibrationAnalysis.Window(index: open, mph: spec.mph, incline: spec.incline,
+                                                           start: test.openStart, end: Int(totalElapsed)))
+        }
+        let analysis = CalibrationAnalysis.points(samples: sampleLog.samples, windows: test.windows)
         let profile = BodyProfile.stored
-        guard let model = FitnessModel.fit(points: analysis.points, restingBpm: test.restingBpm, maxBpm: profile.maxHeartRate,
+        let healthResting = UserDefaults.standard.integer(forKey: BodyProfile.healthRestingKey)
+        let resting = RestingHeartRate.choose(measured: test.restingBpm, health: healthResting >= 30 ? healthResting : nil)
+        var notes: [String] = calibrationNote.map { [$0] } ?? []
+        if let first = analysis.jogStages.compactMap({ test.stages.indices.contains($0 - 1) ? test.stages[$0 - 1].mph : nil }).min() {
+            notes.append(String(format: "You were jogging from %.1f mph; those stages are left out of the walking line.", first))
+            if UserDefaults.standard.double(forKey: BodyProfile.jogStartKey) < 2 {
+                UserDefaults.standard.set(first, forKey: BodyProfile.jogStartKey)
+                notes.append(String(format: "Saved %.1f mph as the speed where you start jogging (change it in Setup).", first))
+            }
+        }
+        let windowText = test.windows.map { "\($0.index):\($0.end - $0.start)s" }.joined(separator: " ")
+        guard var model = FitnessModel.fit(points: analysis.points, restingBpm: resting?.bpm, maxBpm: profile.maxHeartRate,
                                            date: Date(), unsettled: analysis.unsettled) else {
-            calibrationNote = (calibrationNote.map { $0 + " " } ?? "")
-                + "Not enough stages with a clear heart rate to work out a model. Try the test again."
-            dlog("Fitness test: no model (\(analysis.points.count) stages with data)")
+            notes.append("Not enough walking stages with a clear heart rate to work out a model. Try the test again.")
+            calibrationNote = notes.joined(separator: " ")
+            dlog("Fitness test: no model (\(analysis.points.count) usable stages, \(analysis.jogStages.count) jogging; windows \(windowText))")
             return
         }
-        FitnessModel.save(model)
+        model.restingSource = resting?.source
+        if model.isNoisy {
+            notes.append("The fit was noisy, so this result was not saved and your zones are unchanged.")
+        } else {
+            FitnessModel.save(model)
+        }
+        calibrationNote = notes.isEmpty ? nil : notes.joined(separator: " ")
         calibrationResult = model
-        dlog(String(format: "Fitness test: base %.1f, %.1f bpm per mph, %.1f per %% incline, fit %.2f, %d stages, unsettled %@",
-                    model.base, model.perMph, model.perIncline, model.r2, analysis.points.count,
-                    model.unsettled.isEmpty ? "none" : model.unsettled.map(String.init).joined(separator: ",")))
+        dlog(String(format: "Fitness test: base %.1f, %.1f bpm per mph, %.1f per %% incline, fit %.2f, %d stages used (windows %@), jogging stages %@, resting %@",
+                    model.base, model.perMph, model.perIncline, model.r2, analysis.points.count, windowText,
+                    analysis.jogStages.isEmpty ? "none" : analysis.jogStages.map { String($0) }.joined(separator: ","),
+                    resting.map { "\($0.bpm) (\($0.source))" } ?? "unknown"))
     }
 
     private func setHoldStatus(_ text: String) {
@@ -490,6 +555,7 @@ final class WorkoutRunner: ObservableObject {
         self.offer = nil
         switch offer.action {
         case .shiftSpeed(let delta):
+            lastEdit = nil
             let start = stepIndex + 1
             if start < workout.steps.count {
                 for i in start..<workout.steps.count { workout.steps[i].mph += delta }
@@ -518,6 +584,9 @@ final class WorkoutRunner: ObservableObject {
         self.workout = workout
         let after = workout.totalSeconds
         note(.aiEdit, "\(detail) (length \(Self.clock(before)) → \(Self.clock(after)))")
+        lastEdit = (stepIndex + 1, Array(workout.steps.dropFirst(stepIndex + 1)))
+        dlog("Edit applied: \(detail). Next steps: "
+             + workout.steps.dropFirst(stepIndex + 1).prefix(3).map { String(format: "%@ %.1f mph %g%%", $0.label, $0.mph, $0.incline) }.joined(separator: "; "))
         if phase == .running, let step = currentStep {
             if currentMph != nil {
                 treadmill.setSpeed(step.mph)
@@ -550,6 +619,8 @@ final class WorkoutRunner: ObservableObject {
         undoSnapshot = nil
         editNotice = nil
         note(.aiEdit, "undid the last change (length \(Self.clock(snapshot.totalSeconds)))")
+        lastEdit = nil
+        dlog("Undo tapped: the plan is back to the version before the last edit")
         if undoChangedCurrent, phase == .running, let step = currentStep {
             treadmill.setSpeed(step.mph)
             treadmill.setIncline(step.incline)
@@ -670,7 +741,7 @@ final class WorkoutRunner: ObservableObject {
             stepElapsed += delta
             totalElapsed += delta
             sampleLog.add(elapsed: totalElapsed, mph: treadmill.speedMph ?? 0, incline: treadmill.incline ?? 0,
-                          bpm: treadmill.heartRateProvider?()?.bpm)
+                          bpm: treadmill.heartRateProvider?()?.bpm, jog: jogging)
             if now.timeIntervalSince(lastSaveAt) >= 10 { saveRun() }
             let checkInMinutes = UserDefaults.standard.integer(forKey: Self.checkInKey)
             if checkInMinutes > 0, !checkInDue, offer == nil,
@@ -680,6 +751,7 @@ final class WorkoutRunner: ObservableObject {
             if let step = currentStep, stepElapsed >= Double(step.seconds) {
                 advance()
             }
+            trackCalibrationStage()
             if phase == .running { activity.update(activityState()) }
         }
     }
@@ -732,6 +804,15 @@ final class WorkoutRunner: ObservableObject {
         } else {
             let step = workout.steps[stepIndex]
             dlog(String(format: "Step %d of %d: %@, %.1f mph, %.1f%%", stepIndex + 1, workout.steps.count, step.label, step.mph, step.incline))
+            if let edit = lastEdit, stepIndex >= edit.from, stepIndex - edit.from < edit.steps.count {
+                let expected = edit.steps[stepIndex - edit.from]
+                if abs(expected.mph - step.mph) > 0.05 || abs(expected.incline - step.incline) > 0.05 {
+                    dlog(String(format: "Edit check: this step is %.1f mph %g%% but the last edit set %.1f mph %g%%; the plan changed since (an undo or an offer)",
+                                step.mph, step.incline, expected.mph, expected.incline))
+                } else {
+                    dlog("Edit check: this step matches the last edit")
+                }
+            }
             saveRun()
         }
     }

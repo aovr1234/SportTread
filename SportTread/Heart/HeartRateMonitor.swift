@@ -39,6 +39,9 @@ final class HeartRateMonitor: NSObject, ObservableObject {
     private static let nameKey = "heartSensorName"
     private static let restoreID = "SportTreadHeart"
 
+    /// Called on every reading (it also wakes the app in the background: used to keep the treadmill polled)
+    var onReading: (() -> Void)?
+
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var discovered: [UUID: CBPeripheral] = [:]
@@ -253,8 +256,14 @@ extension HeartRateMonitor: CBCentralManagerDelegate, CBPeripheralDelegate {
         MainActor.assumeIsolated {
             guard let data = characteristic.value else { return }
             if characteristic.uuid == Self.hrMeasurement, let reading = HeartRateParser.parse(data) {
-                bpm = reading.contact == false ? nil : reading.bpm
-                lastReadingAt = Date()
+                // The sensor sends 0 until it locks on, and says when it has lost skin contact: neither is a reading
+                if reading.bpm > 0, reading.contact != false {
+                    bpm = reading.bpm
+                    lastReadingAt = Date()
+                } else {
+                    bpm = nil
+                }
+                onReading?()
             } else if characteristic.uuid == Self.batteryLevel, let level = data.first {
                 battery = Int(level)
                 dlog("Heart rate: sensor battery \(level)%")

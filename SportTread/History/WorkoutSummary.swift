@@ -7,6 +7,8 @@ struct SessionSample: Codable, Hashable {
     var incline: Double
     /// Heart rate at that moment, when a sensor was connected
     var bpm: Int? = nil
+    /// True when the person said they were jogging at that moment
+    var jog: Bool? = nil
 }
 
 /// Collects a sample every 5 seconds while a workout or treadmill session runs.
@@ -19,11 +21,11 @@ struct SampleLog: Codable {
         lastT = -5
     }
 
-    mutating func add(elapsed: TimeInterval, mph: Double, incline: Double, bpm: Int? = nil) {
+    mutating func add(elapsed: TimeInterval, mph: Double, incline: Double, bpm: Int? = nil, jog: Bool = false) {
         let t = Int(elapsed)
         guard t - lastT >= 5 else { return }
         lastT = t
-        samples.append(SessionSample(t: t, mph: (mph * 100).rounded() / 100, incline: (incline * 10).rounded() / 10, bpm: bpm))
+        samples.append(SessionSample(t: t, mph: (mph * 100).rounded() / 100, incline: (incline * 10).rounded() / 10, bpm: bpm, jog: jog ? true : nil))
     }
 }
 

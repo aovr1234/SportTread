@@ -33,6 +33,7 @@ struct SportTreadApp: App {
         let heart = HeartRateMonitor()
         let saver = HealthSaver()
         treadmill.heartRateProvider = { [weak heart] in heart?.currentReading() }
+        heart.onReading = { [weak treadmill] in treadmill?.keepAlive() }
         runner.onFinish = { [weak library, weak saver] entry in
             library?.record(entry)
             if let saver { Task { await saver.save(entry) } }

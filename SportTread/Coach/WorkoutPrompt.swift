@@ -22,8 +22,8 @@ enum WorkoutPrompt {
         - Make step lengths whole minutes (multiples of 60 seconds), except interval steps.
         - The chosen workout type and intensity are required. If the person's note seems to ask for something
           else, still make that type and intensity and use the note only to adjust how hard it is.
-        - Speeds are in miles per hour. Walking is about 2.5 to 3.8 mph, jogging about 4 to 6 mph.
-          Stay close to the person's comfortable speed and never go above 10 mph.
+        - Speeds are in miles per hour. Use the walking and jogging speeds given in the request, stay close
+          to the person's comfortable speed and never go above 10 mph.
         - Incline is 0 to 10 percent.
         - Never raise the speed by more than 1.5 mph from one step to the next.
         - Easy means relaxed, moderate means somewhat hard, hard means challenging but safe.
@@ -47,7 +47,7 @@ enum WorkoutPrompt {
 
     /// What each type means, so a model can't read "intervals" as "varied walking".
     static func typeGuide(_ kind: WorkoutRequest.Kind, base: Double, intensity: WorkoutRequest.Intensity,
-                          effort: WorkoutRequest.EffortFrom = .mix) -> String {
+                          effort: WorkoutRequest.EffortFrom = .mix, limits: SpeedLimits = .standard) -> String {
         func mph(_ value: Double) -> String { String(format: "%.1f", value) }
         switch kind {
         case .intervals where effort == .incline:
@@ -58,16 +58,18 @@ enum WorkoutPrompt {
         case .hills:
             return "Type rules for hills: the main part is blocks of 2 to 4 minutes whose incline changes between 2 and 8 percent, with the speed staying near \(mph(base)) mph."
         case .jog:
-            return "Type rules for jog: the main part is jogging at 4 to 6 mph in blocks of 5 to 10 minutes."
+            return "Type rules for jog: the main part is jogging at \(mph(limits.jogLow)) to \(mph(limits.jogHigh)) mph in blocks of 5 to 10 minutes."
         case .walk:
-            return "Type rules for walk: the main part is walking at 2.5 to 3.8 mph in blocks that vary a little."
+            return "Type rules for walk: the main part is walking at \(mph(limits.walkLow)) to \(mph(limits.walkHigh)) mph in blocks that vary a little."
         case .recommend:
             return ""
         }
     }
 
     /// The request itself: what to make, the comfortable speed, the type rules, recent workouts and the note.
-    static func request(_ request: WorkoutRequest, base: Double, history: [HistoryEntry]) -> String {
+    static func request(_ request: WorkoutRequest, base: Double, history allHistory: [HistoryEntry],
+                        limits: SpeedLimits = .standard) -> String {
+        let history = allHistory.filter { $0.name != CalibrationPlan.workoutName }
         let recent = history.suffix(5).map { entry in
             let effort = entry.effort.map { ", effort \($0)/10" } ?? ""
             let done = entry.completed ? "completed" : "stopped early"
@@ -79,7 +81,10 @@ enum WorkoutPrompt {
             Total time: exactly \(request.minutes * 60) seconds.
             The person's comfortable walking speed is about \(String(format: "%.1f", base)) mph.
             """
-        prompt += "\n" + typeGuide(request.kind, base: base, intensity: request.intensity, effort: request.effectiveEffort)
+        if limits != .standard {
+            prompt += String(format: "\nThe person starts jogging at about %.1f mph; speeds below that are walking.", limits.jogLow)
+        }
+        prompt += "\n" + typeGuide(request.kind, base: base, intensity: request.intensity, effort: request.effectiveEffort, limits: limits)
         let incline = inclineGuide(request, base: base)
         if !incline.isEmpty { prompt += "\n" + incline }
         prompt += recent.isEmpty

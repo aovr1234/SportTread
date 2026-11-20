@@ -2,7 +2,7 @@
 
 iPhone app that runs a ProForm 505 CST treadmill without iFit. See [PLAN.md](PLAN.md).
 
-## Current stage: build 0.9.0 (about you, heart-rate zones, the fitness test; 0.8.0: heart rate, heart-rate hold, Apple Health saving, incline choices, live coach on the cloud; 0.7.7: cloud AI for workouts with a fix-up loop, Easy interval limit; 0.7.6: the log shows what was asked and what the AI was told, interval quality check; 0.7.5: the chosen type is checked, warm-up and cool-down only at the ends; 0.7.4: shorter warm-up and cool-down; 0.7.3: diagnostics log, workout recovery, better workouts)
+## Current stage: build 0.10.0 (your own speeds and gait, a fitness test that uses the real stage times, background Bluetooth polling; 0.9.0: about you, heart-rate zones, the fitness test; 0.8.0: heart rate, heart-rate hold, Apple Health saving, incline choices, live coach on the cloud; 0.7.7: cloud AI for workouts with a fix-up loop, Easy interval limit; 0.7.6: the log shows what was asked and what the AI was told, interval quality check; 0.7.5: the chosen type is checked, warm-up and cool-down only at the ends; 0.7.4: shorter warm-up and cool-down; 0.7.3: diagnostics log, workout recovery, better workouts)
 Passed so far: milestones 0, 1, 2, 5, the Live Activity and two field tests. On hold: saving to Apple Health,
 heart rate (waits for the Bluetooth sensor), plan reminders and speed guards.
 
@@ -14,7 +14,7 @@ heart rate (waits for the Bluetooth sensor), plan reminders and speed guards.
 Every build first runs the length tests (`Tests/LengthTests`): every workout length from 10 to 90 minutes,
 simulated AI workouts, live edits and reading a length from text must come out exact, or the build fails.
 
-### Test (0.9.0 and earlier; the 0.7.2 list still applies: pacing, resume, summary, Live Activity buttons)
+### Test (0.10.0 and earlier; the 0.7.2 list still applies: pacing, resume, summary, Live Activity buttons)
 | # | Test | Pass when |
 |---|---|---|
 | 1 | Setup → Diagnostics | Lines appear as you use the app (connects, commands, steps); Share log sends `diagnostics.log`; Clear empties it |
@@ -54,7 +54,7 @@ simulated AI workouts, live edits and reading a length from text must come out e
 | 35 | Start the test and let your heart rate pass 92% of the maximum (or take the sensor off for 10 s) | It skips to the cool-down with a message (or pauses and asks you to check the armband) |
 | 36 | Workout → ✦ Coach → Heart rate: Suggest, pick a zone | Stay under the zone for 4 minutes (or over it for 2) and a harder or easier card appears; Hold has Z1 to Z5 buttons that set the target to the zone's middle |
 | 37 | Finished workout with the sensor on | A line 'Zones: Z2 12:40 · Z3 4:20' under the charts |
-
+| 38 | Setup → About you | New rows: Resting heart rate (with where it comes from), Easy walk, Fast walk, Jogging starts at (tap + to set each; for you about 2.4, 3.0 and 3.6 mph) |\n| 39 | Setup → Fitness test → Begin | Stage speeds run from a little below your easy walk to a little below your jog speed; resting heart rate is the lowest 15 seconds of the 45, or Apple Health's if the standing one is 20 bpm higher |\n| 40 | During a workout or the test | A Walking / Jogging button next to the ♥ number: tap it when you start jogging; the test then leaves jogged stages out and, if your jog speed isn't set, saves it |\n| 41 | The result card after a test | Says where the resting rate came from; zones show walk, jog or walk to jog next to the mph; a noisy result says it was not saved; Setup → Fitness test → Forget the saved test result clears it |\n| 42 | Fitness test stage that is cut short | Not used in the fit (the log lists the real stage lengths, e.g. \"5:51s\") |\n| 43 | Start a workout, lock the phone for several minutes | The treadmill link stays up; the log shows \"Background polling: the link was kept alive n times\"; any drop is logged with seconds since the last status, the app's state, signal, memory |\n| 44 | Create a workout after a fitness test | The comfortable speed in the log's prompt is your middle walking speed, not the test's top speed; the \"Recent workouts\" list has no fitness test |\n| 45 | Make a live coach edit, then watch the next step | The log shows \"Edit applied\" with the next steps and, when the next step starts, \"Edit check: this step matches the last edit\" (or says what changed it); a tap on Undo is logged |\n| 46 | Setup with Low Power Mode on | An orange note at the top explains that Bluetooth is limited in the background |\n
 Still to check from 0.7: the treadmill-mode Live Activity (ends 2 min after stopping), readiness, goal plans,
 the workout editor, and deleting history.
 
